@@ -37,3 +37,4 @@ celerybeat.pid
 
 # Logs
 *.log
+
