@@ -1,0 +1,39 @@
+# Python & Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Environment Variables (Keep credentials secret)
+.env
+
+# Database (Local dev SQLite)
+*.sqlite3
+*.sqlite3-journal
+
+# Django Static & Media
+staticfiles/
+media/
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Logs
+*.log
