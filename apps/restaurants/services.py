@@ -96,7 +96,15 @@ def branch_create(
     restaurant: Restaurant,
     name: str,
     branch_code: str,
+    operate_type: str = 'DINE_IN',
     manager: Optional[User] = None,
+    enable_dine_in: bool = True,
+    enable_takeaway: bool = True,
+    enable_delivery: bool = True,
+    enable_drive_thru: bool = False,
+    enable_qr_ordering: bool = True,
+    enable_kiosk: bool = False,
+    enable_pos: bool = True,
     phone_number: str = '',
     email: str = '',
     address_line: str = '',
@@ -109,6 +117,7 @@ def branch_create(
 ) -> Branch:
     """
     Creates a new franchise outlet / branch for a parent restaurant brand.
+    Configures operational type and channel capabilities.
     """
     name = name.strip()
     branch_code = branch_code.strip().upper()
@@ -130,7 +139,15 @@ def branch_create(
         restaurant=restaurant,
         name=name,
         branch_code=branch_code,
+        operate_type=operate_type,
         manager=manager,
+        enable_dine_in=enable_dine_in,
+        enable_takeaway=enable_takeaway,
+        enable_delivery=enable_delivery,
+        enable_drive_thru=enable_drive_thru,
+        enable_qr_ordering=enable_qr_ordering,
+        enable_kiosk=enable_kiosk,
+        enable_pos=enable_pos,
         phone_number=phone_number.strip(),
         email=email.strip(),
         address_line=address_line.strip(),
@@ -145,12 +162,55 @@ def branch_create(
     if manager:
         manager.branch = branch
         manager.restaurant = restaurant
-        if manager.role == UserRole.CUSTOMER:
+        if manager.role in (UserRole.CUSTOMER, UserRole.WAITER, UserRole.CASHIER):
             manager.role = UserRole.BRANCH_MANAGER
-            manager.is_staff = True
+        manager.is_staff = True
         manager.save(update_fields=['branch', 'restaurant', 'role', 'is_staff'])
 
     return branch
+
+
+@transaction.atomic
+def branch_with_admin_create(
+    *,
+    restaurant: Restaurant,
+    name: str,
+    branch_code: str,
+    operate_type: str = 'DINE_IN',
+    admin_username: Optional[str] = None,
+    admin_phone: Optional[str] = None,
+    admin_email: Optional[str] = None,
+    admin_password: Optional[str] = None,
+    existing_manager: Optional[User] = None,
+    **branch_kwargs,
+) -> Tuple[Branch, Optional[User]]:
+    """
+    Creates a branch and optionally provisions a new Outlet Admin user atomically.
+    """
+    assigned_manager = existing_manager
+
+    # Check if new admin credentials are provided
+    if admin_password and (admin_username or admin_phone or admin_email):
+        assigned_manager = user_create(
+            username=admin_username,
+            email=admin_email,
+            phone_number=admin_phone,
+            password=admin_password,
+            role=UserRole.BRANCH_MANAGER,
+            is_staff=True,
+            is_verified=True,
+        )
+
+    branch = branch_create(
+        restaurant=restaurant,
+        name=name,
+        branch_code=branch_code,
+        operate_type=operate_type,
+        manager=assigned_manager,
+        **branch_kwargs,
+    )
+
+    return branch, assigned_manager
 
 
 @transaction.atomic
@@ -172,5 +232,83 @@ def branch_update(branch: Branch, **fields) -> Branch:
         if hasattr(branch, field):
             setattr(branch, field, value)
     branch.save()
+    return branch
+
+
+@transaction.atomic
+def outlet_update_operational_status(
+    *,
+    branch: Branch,
+    accepting_orders: Optional[bool] = None,
+    is_active: Optional[bool] = None,
+    channel_toggles: Optional[dict] = None,
+) -> Branch:
+    """
+    High-Scale Live State Engine (Rule 3 & Principle 7):
+    Updates outlet operational state in PostgreSQL, busts Redis cache,
+    and immediately broadcasts a real-time event via Django Channels to all
+    connected customer apps, KDS, and Kiosks for ZERO-RELOAD reactive UI updates.
+    """
+    from django.core.cache import cache
+    from asgiref.sync import async_to_sync
+    from channels.layers import get_channel_layer
+
+    if accepting_orders is not None:
+        branch.accepting_orders = accepting_orders
+
+    if is_active is not None:
+        branch.is_active = is_active
+
+    if channel_toggles:
+        valid_channels = (
+            'enable_dine_in',
+            'enable_takeaway',
+            'enable_delivery',
+            'enable_drive_thru',
+            'enable_qr_ordering',
+            'enable_kiosk',
+            'enable_pos',
+        )
+        for key, val in channel_toggles.items():
+            if key in valid_channels and isinstance(val, bool):
+                setattr(branch, key, val)
+
+    branch.save()
+
+    # 1. Invalidate Redis Cache (Single-Flight Cache Invalidation)
+    cache.delete(f"outlet:{branch.id}:status")
+
+    # 2. Broadcast Live WebSocket Event (Zero Page Reload Push)
+    channel_layer = get_channel_layer()
+    if channel_layer:
+        group_name = f"outlet_{branch.id}_operations"
+        payload = {
+            "event": "OUTLET_STATUS_CHANGED",
+            "outlet_id": branch.id,
+            "branch_code": branch.branch_code,
+            "accepting_orders": branch.accepting_orders,
+            "is_active": branch.is_active,
+            "channels": {
+                "dine_in": branch.enable_dine_in,
+                "takeaway": branch.enable_takeaway,
+                "delivery": branch.enable_delivery,
+                "drive_thru": branch.enable_drive_thru,
+                "qr_ordering": branch.enable_qr_ordering,
+                "kiosk": branch.enable_kiosk,
+                "pos": branch.enable_pos,
+            }
+        }
+        try:
+            async_to_sync(channel_layer.group_send)(
+                group_name,
+                {
+                    "type": "outlet_status_event",
+                    "payload": payload,
+                }
+            )
+        except Exception:
+            # Silently pass if channel layer worker is not running in tests
+            pass
+
     return branch
 

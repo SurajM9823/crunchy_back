@@ -95,6 +95,52 @@ class LoginAPIView(APIView):
         return Response(token_data, status=status.HTTP_200_OK)
 
 
+class OutletLoginAPIView(APIView):
+    """
+    POST /api/v1/auth/outlet-login/
+    Authenticates an Outlet Administrator (Branch Manager, Restaurant Owner, or Staff)
+    and returns JWT tokens containing cryptographic outlet claims along with
+    the branch operational context.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = LoginSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        identifier = serializer.validated_data['identifier']
+        password = serializer.validated_data['password']
+
+        user = authenticate_user(identifier=identifier, password=password)
+
+        if not user:
+            existing = get_user_by_identifier(identifier)
+            if existing and not existing.is_active:
+                return Response(
+                    {"detail": "Account is disabled. Please contact the administrator."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            return Response(
+                {"detail": "Invalid credentials. Provide a valid email, phone number, or username."},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        if not (user.is_staff or user.is_superuser or user.role in ('BRANCH_MANAGER', 'RESTAURANT_OWNER', 'CASHIER', 'CHEF')):
+            return Response(
+                {"detail": "Access denied. Only authorized outlet staff and administrators can access this portal."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        if not user.branch and not user.is_superuser and not user.restaurant:
+            return Response(
+                {"detail": "No outlet is currently assigned to this administrator account. Please contact the superadmin."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        token_data = generate_auth_tokens(user)
+        return Response(token_data, status=status.HTTP_200_OK)
+
+
 class UserProfileAPIView(APIView):
     """
     GET /api/v1/auth/me/

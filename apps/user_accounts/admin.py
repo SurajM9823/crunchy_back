@@ -20,20 +20,22 @@ class CustomUserAdmin(BaseUserAdmin):
         'email',
         'phone_number',
         'role',
+        'restaurant',
+        'branch',
         'is_staff',
         'is_superuser',
         'is_verified',
         'is_active',
         'created_at',
     )
-    list_filter = ('role', 'is_staff', 'is_superuser', 'is_active', 'is_verified')
+    list_filter = ('role', 'restaurant', 'branch', 'is_staff', 'is_superuser', 'is_active', 'is_verified')
     search_fields = ('username', 'email', 'phone_number', 'first_name', 'last_name')
     ordering = ('-created_at',)
 
     fieldsets = (
         (None, {'fields': ('username', 'password')}),
         (_('Personal info'), {'fields': ('first_name', 'last_name', 'email', 'phone_number')}),
-        (_('Restaurant Role & Status'), {'fields': ('role', 'is_verified')}),
+        (_('Franchise & Outlet Assignment'), {'fields': ('role', 'restaurant', 'branch', 'is_verified')}),
         (
             _('Permissions'),
             {

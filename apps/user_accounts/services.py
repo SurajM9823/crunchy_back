@@ -114,12 +114,46 @@ def superuser_login(request, identifier: str, password: str) -> Tuple[bool, str,
 def generate_auth_tokens(user: User) -> dict:
     """
     Generates SimpleJWT access and refresh tokens along with user meta payload.
+    Generates SimpleJWT access and refresh tokens with cryptographic claims
+    and returns user and outlet operational payload.
     """
     refresh = RefreshToken.for_user(user)
     # Add custom claims to the JWT payload
+    # Add custom claims to the JWT payload (Stateless verification at 10k scale)
     refresh['role'] = user.role
     refresh['is_superuser'] = user.is_superuser
     refresh['is_staff'] = user.is_staff
+    refresh['restaurant_id'] = user.restaurant_id
+    refresh['branch_id'] = user.branch_id
+
+    outlet_data = None
+    if user.branch:
+        b = user.branch
+        refresh['branch_code'] = b.branch_code
+        refresh['operate_type'] = b.operate_type
+        outlet_data = {
+            'id': b.id,
+            'name': b.name,
+            'branch_code': b.branch_code,
+            'operate_type': b.operate_type,
+            'operate_type_display': b.get_operate_type_display(),
+            'is_active': b.is_active,
+            'accepting_orders': b.accepting_orders,
+            'channels': {
+                'dine_in': b.enable_dine_in,
+                'takeaway': b.enable_takeaway,
+                'delivery': b.enable_delivery,
+                'drive_thru': b.enable_drive_thru,
+                'qr_ordering': b.enable_qr_ordering,
+                'kiosk': b.enable_kiosk,
+                'pos': b.enable_pos,
+            },
+            'restaurant': {
+                'id': b.restaurant_id,
+                'name': b.restaurant.name if b.restaurant else '',
+                'slug': b.restaurant.slug if b.restaurant else '',
+            } if b.restaurant else None,
+        }
 
     return {
         'access': str(refresh.access_token),
@@ -133,6 +167,9 @@ def generate_auth_tokens(user: User) -> dict:
             'role_display': user.get_role_display(),
             'is_superuser': user.is_superuser,
             'is_staff': user.is_staff,
-        }
+            'restaurant_id': user.restaurant_id,
+            'branch_id': user.branch_id,
+        },
+        'outlet': outlet_data,
     }
 

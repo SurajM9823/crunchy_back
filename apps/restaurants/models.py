@@ -94,6 +94,15 @@ class Restaurant(TimeStampedModel):
         return self.branches.count()
 
 
+class OperateType(models.TextChoices):
+    DINE_IN = 'DINE_IN', _('Full Dine-In Restaurant')
+    EXPRESS_TAKEOUT = 'EXPRESS_TAKEOUT', _('Express QSR / Takeaway')
+    CLOUD_KITCHEN = 'CLOUD_KITCHEN', _('Cloud / Ghost Kitchen (Delivery Only)')
+    DRIVE_THRU = 'DRIVE_THRU', _('Drive-Thru & Pick-up')
+    FOOD_TRUCK_KIOSK = 'FOOD_TRUCK_KIOSK', _('Food Truck / Kiosk')
+    HYBRID = 'HYBRID', _('Hybrid Multi-Channel Hub')
+
+
 class Branch(TimeStampedModel):
     """
     An individual outlet or franchise branch of a Restaurant Brand.
@@ -117,13 +126,58 @@ class Branch(TimeStampedModel):
         db_index=True,
         help_text=_('Unique operational code, e.g. "CB-KTM-001"'),
     )
+    operate_type = models.CharField(
+        _('operate type'),
+        max_length=30,
+        choices=OperateType.choices,
+        default=OperateType.DINE_IN,
+        db_index=True,
+        help_text=_('Operating model for this outlet (Dine-in, Cloud Kitchen, Express Takeout, etc.)'),
+    )
     manager = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='managed_branches',
-        verbose_name=_('branch manager'),
+        verbose_name=_('outlet admin / manager'),
+        help_text=_('The assigned Outlet Administrator responsible for local operations.'),
+    )
+    # Channel Capabilities
+    enable_dine_in = models.BooleanField(
+        _('enable dine-in'),
+        default=True,
+        help_text=_('Allow table seating and waiter service at this outlet.'),
+    )
+    enable_takeaway = models.BooleanField(
+        _('enable takeaway'),
+        default=True,
+        help_text=_('Allow counter pick-up / takeaway orders.'),
+    )
+    enable_delivery = models.BooleanField(
+        _('enable delivery'),
+        default=True,
+        help_text=_('Allow delivery fulfillment from this outlet.'),
+    )
+    enable_drive_thru = models.BooleanField(
+        _('enable drive-thru'),
+        default=False,
+        help_text=_('Allow vehicular drive-thru lane ordering.'),
+    )
+    enable_qr_ordering = models.BooleanField(
+        _('enable QR digital ordering'),
+        default=True,
+        help_text=_('Allow customers to scan table QR codes and place orders.'),
+    )
+    enable_kiosk = models.BooleanField(
+        _('enable self-order kiosk'),
+        default=False,
+        help_text=_('Enable self-ordering touch kiosks at this outlet.'),
+    )
+    enable_pos = models.BooleanField(
+        _('enable cashier POS'),
+        default=True,
+        help_text=_('Enable cashier billing terminal at this outlet.'),
     )
     phone_number = models.CharField(
         _('outlet phone'),

@@ -5,6 +5,7 @@ from .views import (
     SuperuserLoginView,
     SuperuserLogoutView,
     LoginAPIView,
+    OutletLoginAPIView,
     UserProfileAPIView,
     StaffListAPIView,
     SystemHealthAPIView,
@@ -20,6 +21,7 @@ urlpatterns = [
 
     # REST API Endpoints
     path('api/v1/auth/login/', LoginAPIView.as_view(), name='api-login'),
+    path('api/v1/auth/outlet-login/', OutletLoginAPIView.as_view(), name='api-outlet-login'),
     path('api/v1/auth/token/refresh/', TokenRefreshView.as_view(), name='api-token-refresh'),
     path('api/v1/auth/me/', UserProfileAPIView.as_view(), name='api-profile'),
     path('api/v1/auth/staff/', StaffListAPIView.as_view(), name='api-staff-list'),

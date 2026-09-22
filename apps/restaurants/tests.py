@@ -140,9 +140,161 @@ class RestaurantDomainTests(TestCase):
         branch_res = self.client.post(f'/api/v1/restaurants/{created_id}/branches/', {
             'name': 'Airport Hub',
             'branch_code': 'CBG-AIR-01',
+            'operate_type': 'CLOUD_KITCHEN',
+            'enable_dine_in': False,
+            'enable_delivery': True,
             'city': 'Kathmandu',
             'is_main_branch': True,
         })
         self.assertEqual(branch_res.status_code, status.HTTP_201_CREATED)
         self.assertEqual(branch_res.data['branch_code'], 'CBG-AIR-01')
+        self.assertEqual(branch_res.data['operate_type'], 'CLOUD_KITCHEN')
+        self.assertFalse(branch_res.data['enable_dine_in'])
+
+    def test_quick_create_outlet_admin_service(self):
+        from apps.restaurants.services import branch_with_admin_create
+        from apps.restaurants.models import OperateType
+
+        brand = restaurant_create(
+            name="Crunchy Express",
+            admin_user=self.restaurant_admin,
+        )
+
+        branch, new_admin = branch_with_admin_create(
+            restaurant=brand,
+            name="Pokhara Express",
+            branch_code="CE-PKH-01",
+            operate_type=OperateType.EXPRESS_TAKEOUT,
+            admin_username="pokhara_manager",
+            admin_phone="+9779811223344",
+            admin_email="pokhara@crunchy.local",
+            admin_password="ManagerPass123!",
+            city="Pokhara",
+            enable_dine_in=False,
+            enable_takeaway=True,
+        )
+
+        self.assertIsNotNone(new_admin)
+        self.assertEqual(new_admin.username, "pokhara_manager")
+        self.assertEqual(new_admin.role, UserRole.BRANCH_MANAGER)
+        self.assertTrue(new_admin.is_staff)
+        self.assertEqual(new_admin.branch_id, branch.id)
+        self.assertEqual(branch.manager_id, new_admin.id)
+        self.assertEqual(branch.operate_type, OperateType.EXPRESS_TAKEOUT)
+        self.assertFalse(branch.enable_dine_in)
+        self.assertTrue(branch.enable_takeaway)
+
+    def test_outlet_admin_login_and_token_claims(self):
+        from apps.restaurants.services import branch_with_admin_create
+        from apps.restaurants.models import OperateType
+        import jwt
+        from django.conf import settings
+
+        brand = restaurant_create(
+            name="Crunchy Bag Hub",
+            admin_user=self.restaurant_admin,
+        )
+        branch, manager = branch_with_admin_create(
+            restaurant=brand,
+            name="Baneshwor Branch",
+            branch_code="CB-BNS-01",
+            operate_type=OperateType.DINE_IN,
+            admin_username="baneshwor_mgr",
+            admin_phone="+9779841000001",
+            admin_email="baneshwor@crunchy.local",
+            admin_password="BranchPassword123!",
+            city="Kathmandu",
+        )
+
+        # 1. Login via Outlet Login API using phone number
+        res = self.client.post('/api/v1/auth/outlet-login/', {
+            'identifier': '+9779841000001',
+            'password': 'BranchPassword123!',
+        })
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertIn('access', res.data)
+        self.assertIn('refresh', res.data)
+        self.assertIn('outlet', res.data)
+
+        # Verify outlet metadata payload
+        outlet_data = res.data['outlet']
+        self.assertEqual(outlet_data['id'], branch.id)
+        self.assertEqual(outlet_data['branch_code'], 'CB-BNS-01')
+        self.assertEqual(outlet_data['operate_type'], 'DINE_IN')
+        self.assertTrue(outlet_data['accepting_orders'])
+
+        # Decode JWT token and verify embedded claims (Rule 13 - Stateless 10k Concurrency)
+        access_token = res.data['access']
+        payload = jwt.decode(
+            access_token,
+            settings.SECRET_KEY,
+            algorithms=['HS256'],
+            options={"verify_signature": False}
+        )
+        self.assertEqual(payload['branch_id'], branch.id)
+        self.assertEqual(payload['branch_code'], 'CB-BNS-01')
+        self.assertEqual(payload['restaurant_id'], brand.id)
+        self.assertEqual(payload['operate_type'], 'DINE_IN')
+
+    def test_outlet_admin_operational_endpoints(self):
+        from apps.restaurants.services import branch_with_admin_create
+        from apps.restaurants.models import OperateType
+
+        brand = restaurant_create(
+            name="Crunchy Station",
+            admin_user=self.restaurant_admin,
+        )
+        branch1, manager1 = branch_with_admin_create(
+            restaurant=brand,
+            name="Station One",
+            branch_code="CS-01",
+            operate_type=OperateType.EXPRESS_TAKEOUT,
+            admin_username="station1_mgr",
+            admin_phone="+9779841111111",
+            admin_password="StationPass123!",
+        )
+        branch2, manager2 = branch_with_admin_create(
+            restaurant=brand,
+            name="Station Two",
+            branch_code="CS-02",
+            operate_type=OperateType.CLOUD_KITCHEN,
+            admin_username="station2_mgr",
+            admin_phone="+9779842222222",
+            admin_password="StationPass123!",
+        )
+
+        # Authenticate as manager of Branch 1
+        self.client.force_authenticate(user=manager1)
+
+        # 1. GET /api/v1/restaurants/outlets/me/
+        me_res = self.client.get('/api/v1/restaurants/outlets/me/')
+        self.assertEqual(me_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(me_res.data['id'], branch1.id)
+        self.assertEqual(me_res.data['branch_code'], 'CS-01')
+
+        # 2. Toggle orders off (Emergency rush)
+        toggle_res = self.client.post('/api/v1/restaurants/outlets/me/toggle-orders/', {
+            'accepting_orders': False,
+            'channels': {
+                'enable_delivery': False,
+                'enable_takeaway': True,
+            }
+        }, format='json')
+        self.assertEqual(toggle_res.status_code, status.HTTP_200_OK)
+        self.assertFalse(toggle_res.data['outlet']['accepting_orders'])
+        self.assertFalse(toggle_res.data['outlet']['enable_delivery'])
+        self.assertTrue(toggle_res.data['outlet']['enable_takeaway'])
+
+        # 3. GET /api/v1/restaurants/outlets/me/summary/ (High-Scale Redis Cache-Aside)
+        sum_res = self.client.get('/api/v1/restaurants/outlets/me/summary/')
+        self.assertEqual(sum_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(sum_res.data['branch_id'], branch1.id)
+        self.assertFalse(sum_res.data['accepting_orders'])
+        self.assertFalse(sum_res.data['channels']['enable_delivery'])
+
+        # 4. Cross-Tenant Protection: Customer cannot access outlet me
+        self.client.force_authenticate(user=self.customer)
+        cust_res = self.client.get('/api/v1/restaurants/outlets/me/')
+        self.assertEqual(cust_res.status_code, status.HTTP_403_FORBIDDEN)
+
 
