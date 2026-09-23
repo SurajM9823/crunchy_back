@@ -24,7 +24,7 @@ DEBUG = os.getenv('DEBUG', 'True').lower() in ('true', '1', 'yes')
 
 ALLOWED_HOSTS = [
     host.strip()
-    for host in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,[::1]').split(',')
+    for host in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,[::1],crunchybag.com,www.crunchybag.com').split(',')
     if host.strip()
 ]
 
@@ -186,10 +186,25 @@ CORS_ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.getenv(
         'CORS_ALLOWED_ORIGINS',
-        'http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173'
+        'http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173,https://crunchybag.com,https://www.crunchybag.com'
     ).split(',')
     if origin.strip()
 ]
+
+# CSRF Trusted Origins (Mandatory for HTTPS POST in Django 4.0+)
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        'CSRF_TRUSTED_ORIGINS',
+        'https://crunchybag.com,https://www.crunchybag.com,http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173,http://127.0.0.1:8000,http://localhost:8000'
+    ).split(',')
+    if origin.strip()
+]
+
+# Reverse Proxy & SSL Configuration (For Nginx, Cloudflare, Caddy SSL Termination)
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+USE_X_FORWARDED_HOST = True
+USE_X_FORWARDED_PORT = True
 
 # Celery Configuration
 CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://127.0.0.1:6379/0')
