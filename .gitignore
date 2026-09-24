@@ -36,5 +36,7 @@ celerybeat-schedule
 celerybeat.pid
 
 # Logs
+logs/*
+!logs/.gitkeep
 *.log
 

@@ -12,6 +12,7 @@ class UserRole(models.TextChoices):
     CHEF = 'CHEF', _('Kitchen Chef')
     WAITER = 'WAITER', _('Waiter / Server')
     CASHIER = 'CASHIER', _('Cashier / Billing')
+    RIDER = 'RIDER', _('Delivery Rider')
     CUSTOMER = 'CUSTOMER', _('Customer')
 
 
