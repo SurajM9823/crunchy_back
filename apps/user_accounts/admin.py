@@ -1,12 +1,30 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.translation import gettext_lazy as _
-from .models import User
+from .models import User, Employee
 
 # Configure Django Admin Branding for Crunchy RMS
 admin.site.site_header = "Crunchy RMS Administration"
 admin.site.site_title = "Crunchy RMS Portal"
 admin.site.index_title = "Restaurant Operations & Control Center"
+
+
+@admin.register(Employee)
+class EmployeeAdmin(admin.ModelAdmin):
+    list_display = (
+        'id',
+        'name',
+        'role',
+        'title',
+        'assigned_outlet',
+        'salary_monthly',
+        'is_active',
+        'joined_date',
+        'created_at',
+    )
+    list_filter = ('role', 'assigned_outlet', 'is_active', 'joined_date')
+    search_fields = ('id', 'name', 'email', 'phone', 'title', 'assigned_outlet__name')
+    readonly_fields = ('id', 'created_at', 'updated_at')
 
 
 @admin.register(User)

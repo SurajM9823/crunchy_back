@@ -138,3 +138,174 @@ class UserAuthenticationTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['status'], 'online')
 
+
+from decimal import Decimal
+from apps.restaurants.models import Restaurant, Branch, OperateType
+from apps.restaurants.services import restaurant_create, branch_with_admin_create
+from apps.user_accounts.models import Employee, SystemRole
+
+
+class StaffAccessManagementTests(TestCase):
+    def setUp(self):
+        self.api_client = APIClient()
+
+        # 1. Setup Brand and Branches
+        self.owner = user_create(
+            username="brand_director",
+            email="director@crunchy.com",
+            phone_number="+9779800000081",
+            password="DirectorPassword123!",
+            role=UserRole.RESTAURANT_OWNER,
+            is_staff=True,
+        )
+        self.brand = restaurant_create(
+            name="Crunchy Bag Staff Brand",
+            admin_user=self.owner,
+        )
+        self.branch1, self.manager1 = branch_with_admin_create(
+            restaurant=self.brand,
+            name="Durbar Marg HQ",
+            branch_code="CRU-01",
+            operate_type=OperateType.DINE_IN,
+            admin_username="durbarmarg_mgr",
+            admin_phone="+9779800000082",
+            admin_password="ManagerPass123!",
+        )
+        self.branch2, self.manager2 = branch_with_admin_create(
+            restaurant=self.brand,
+            name="Thamel Branch",
+            branch_code="CRU-02",
+            operate_type=OperateType.DINE_IN,
+            admin_username="thamel_mgr",
+            admin_phone="+9779800000083",
+            admin_password="ManagerPass123!",
+        )
+
+    def test_branch_manager_creates_employee_with_auto_assigned_branch(self):
+        """
+        When logged-in branch manager creates an employee, the backend automatically
+        binds the employee to the manager's branch without requiring outlet selection.
+        """
+        self.api_client.force_authenticate(user=self.manager1)
+
+        payload = {
+            "name": "Bikash Shrestha",
+            "email": "bikash.cashier@crunchy.com",
+            "phone": "+977 9841234567",
+            "role": "CASHIER",
+            "title": "Head Cashier & Billing Operator",
+            "salary_monthly": "36000.00",
+            "pin_code": "4821",
+            "temporary_password": "TempPass123!",
+        }
+        res = self.api_client.post('/api/v1/employees/', data=payload, format='json')
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(res.data['name'], "Bikash Shrestha")
+        self.assertEqual(res.data['assigned_outlet']['name'], "Durbar Marg HQ")
+        self.assertEqual(res.data['assigned_outlet']['code'], "CRU-01")
+        # Preset auto-populated
+        self.assertEqual(res.data['assigned_pages'], ["pos", "daybook", "loyalty"])
+
+        emp = Employee.objects.get(id=res.data['id'])
+        self.assertTrue(emp.check_pin("4821"))
+        self.assertFalse(emp.check_pin("0000"))
+
+    def test_employee_list_strictly_scoped_to_logged_in_branch(self):
+        """
+        Manager 1 only sees staff of Durbar Marg HQ, maintaining strict tenant isolation.
+        """
+        # Create 1 staff in branch 1
+        self.api_client.force_authenticate(user=self.manager1)
+        self.api_client.post('/api/v1/employees/', data={
+            "name": "Staff Branch 1",
+            "email": "staff1@crunchy.com",
+            "phone": "+9779840000001",
+            "role": "CASHIER",
+            "salary_monthly": "30000.00",
+            "pin_code": "1111",
+        }, format='json')
+
+        # Create 1 staff in branch 2
+        self.api_client.force_authenticate(user=self.manager2)
+        self.api_client.post('/api/v1/employees/', data={
+            "name": "Staff Branch 2",
+            "email": "staff2@crunchy.com",
+            "phone": "+9779840000002",
+            "role": "CASHIER",
+            "salary_monthly": "32000.00",
+            "pin_code": "2222",
+        }, format='json')
+
+        # Manager 1 queries list
+        self.api_client.force_authenticate(user=self.manager1)
+        res1 = self.api_client.get('/api/v1/employees/')
+        self.assertEqual(res1.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res1.data['results']), 1)
+        self.assertEqual(res1.data['results'][0]['name'], "Staff Branch 1")
+        self.assertEqual(res1.data['metrics']['total_staff'], 1)
+        self.assertEqual(res1.data['metrics']['total_monthly_payroll'], 30000.0)
+
+        # Manager 2 queries list
+        self.api_client.force_authenticate(user=self.manager2)
+        res2 = self.api_client.get('/api/v1/employees/')
+        self.assertEqual(res2.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res2.data['results']), 1)
+        self.assertEqual(res2.data['results'][0]['name'], "Staff Branch 2")
+        self.assertEqual(res2.data['metrics']['total_staff'], 1)
+        self.assertEqual(res2.data['metrics']['total_monthly_payroll'], 32000.0)
+
+    def test_quick_pos_pin_login_endpoint(self):
+        """
+        Fast cashier shift switch using 4-digit PIN code.
+        """
+        self.api_client.force_authenticate(user=self.manager1)
+        res_create = self.api_client.post('/api/v1/employees/', data={
+            "name": "Sita Sharma",
+            "email": "sita@crunchy.com",
+            "phone": "+9779849123456",
+            "role": "CASHIER",
+            "title": "Counter Cashier",
+            "pin_code": "4821",
+        }, format='json')
+        self.assertEqual(res_create.status_code, status.HTTP_201_CREATED)
+
+        # Switch to unauthenticated client (POS terminal)
+        anon_client = APIClient()
+        pin_res = anon_client.post('/api/v1/auth/staff-pin-login/', data={
+            "outlet_id": self.branch1.id,
+            "pin_code": "4821",
+        }, format='json')
+        self.assertEqual(pin_res.status_code, status.HTTP_200_OK)
+        self.assertIn('access', pin_res.data)
+        self.assertIn('refresh', pin_res.data)
+        self.assertEqual(pin_res.data['employee']['name'], "Sita Sharma")
+        self.assertEqual(pin_res.data['employee']['role'], "CASHIER")
+        self.assertEqual(pin_res.data['outlet']['name'], "Durbar Marg HQ")
+
+        # Wrong PIN test
+        wrong_pin = anon_client.post('/api/v1/auth/staff-pin-login/', data={
+            "outlet_id": self.branch1.id,
+            "pin_code": "9999",
+        }, format='json')
+        self.assertEqual(wrong_pin.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_super_admin_cannot_be_deleted(self):
+        """
+        Business Rule: Root SUPER_ADMIN account cannot be deleted (403 Forbidden).
+        """
+        self.api_client.force_authenticate(user=self.manager1)
+        # Create super admin employee
+        res_create = self.api_client.post('/api/v1/employees/', data={
+            "name": "Rahul Adhikari",
+            "email": "rahul.admin@crunchy.com",
+            "phone": "+9779851023456",
+            "role": "SUPER_ADMIN",
+            "title": "General Manager",
+            "pin_code": "9999",
+        }, format='json')
+        emp_id = res_create.data['id']
+
+        del_res = self.api_client.delete(f'/api/v1/employees/{emp_id}/')
+        self.assertEqual(del_res.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn("Cannot delete root SUPER_ADMIN account", del_res.data['detail'])
+

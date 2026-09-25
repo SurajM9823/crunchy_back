@@ -1,15 +1,26 @@
+from decimal import Decimal
 from django.shortcuts import render, redirect
 from django.views import View
 from django.contrib.auth import logout
 from django.contrib import messages
 from django.http import JsonResponse
+from django.db.models import Q, Sum
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 
-from .serializers import LoginSerializer, UserOutputSerializer, UserCreateSerializer
-from .services import authenticate_user, generate_auth_tokens, superuser_login, user_create
+from apps.restaurants.models import Branch
+from .models import Employee, SystemRole
+from .serializers import (
+    LoginSerializer, UserOutputSerializer, UserCreateSerializer,
+    EmployeeSerializer, EmployeeCreateSerializer, EmployeeUpdateSerializer,
+    StaffPinLoginSerializer,
+)
+from .services import (
+    authenticate_user, generate_auth_tokens, superuser_login, user_create,
+    employee_create, employee_update, employee_delete,
+)
 from .selectors import get_user_by_id, list_staff_users, get_user_by_identifier
 
 
@@ -196,4 +207,250 @@ class SystemHealthAPIView(APIView):
             "database": db_status,
             "version": "1.0.0",
         }, status=status.HTTP_200_OK)
+
+
+class EmployeeListCreateAPIView(APIView):
+    """
+    GET /api/v1/employees/
+    Lists staff and computes staff KPI metrics.
+    Branch-scoped: Automatically restricted to logged-in admin's outlet.
+
+    POST /api/v1/employees/
+    Creates a new employee profile and underlying user account.
+    Branch-scoped: Automatically bound to logged-in admin's outlet.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def _get_scoped_branch(self, request):
+        user = request.user
+        if user.branch:
+            return user.branch
+        elif user.restaurant:
+            return user.restaurant.branches.first()
+        elif user.is_superuser:
+            outlet_id = request.query_params.get('outlet_id')
+            if outlet_id:
+                return (
+                    Branch.objects.filter(id=outlet_id).first() if str(outlet_id).isdigit() else None
+                ) or Branch.objects.filter(branch_code=outlet_id).first()
+            return None
+        return None
+
+    def get(self, request):
+        scoped_branch = self._get_scoped_branch(request)
+        qs = Employee.objects.select_related('assigned_outlet', 'user').all()
+
+        if scoped_branch:
+            qs = qs.filter(assigned_outlet=scoped_branch)
+        elif not request.user.is_superuser:
+            return Response(
+                {"detail": "No outlet assigned to your account."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Filters
+        search = request.query_params.get('search', '').strip()
+        if search:
+            qs = qs.filter(
+                Q(name__icontains=search) |
+                Q(email__icontains=search) |
+                Q(phone__icontains=search) |
+                Q(title__icontains=search)
+            )
+
+        role = request.query_params.get('role', '').strip()
+        if role and role.upper() != 'ALL' and role in SystemRole.values:
+            qs = qs.filter(role=role)
+
+        status_filter = request.query_params.get('status', '').strip().upper()
+        if status_filter == 'ACTIVE':
+            qs = qs.filter(is_active=True)
+        elif status_filter == 'INACTIVE':
+            qs = qs.filter(is_active=False)
+
+        # Compute KPI Metrics
+        total_staff = qs.count()
+        active_staff = qs.filter(is_active=True).count()
+        active_percentage = round((active_staff / total_staff * 100)) if total_staff > 0 else 100
+        payroll_sum = qs.filter(is_active=True).aggregate(Sum('salary_monthly'))['salary_monthly__sum'] or Decimal('0.00')
+
+        if scoped_branch:
+            branches_staffed = 1 if total_staff > 0 else 0
+            total_branches = 1
+        else:
+            branches_staffed = qs.values('assigned_outlet').distinct().count()
+            total_branches = Branch.objects.filter(is_active=True).count()
+
+        metrics = {
+            "total_staff": total_staff,
+            "active_staff": active_staff,
+            "active_percentage": active_percentage,
+            "total_monthly_payroll": float(payroll_sum),
+            "branches_staffed": branches_staffed,
+            "total_branches": total_branches,
+        }
+
+        serializer = EmployeeSerializer(qs, many=True)
+        return Response({
+            "metrics": metrics,
+            "results": serializer.data,
+        }, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        serializer = EmployeeCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        scoped_branch = self._get_scoped_branch(request)
+        if not scoped_branch:
+            assigned_outlet_id = data.get('assigned_outlet_id')
+            if assigned_outlet_id:
+                scoped_branch = (
+                    Branch.objects.filter(id=assigned_outlet_id).first() if str(assigned_outlet_id).isdigit() else None
+                ) or Branch.objects.filter(branch_code=assigned_outlet_id).first()
+            if not scoped_branch:
+                scoped_branch = Branch.objects.first()
+
+        if not scoped_branch:
+            return Response(
+                {"detail": "No valid outlet identified for employee assignment."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        employee = employee_create(
+            name=data['name'],
+            email=data['email'],
+            phone=data['phone'],
+            assigned_outlet=scoped_branch,
+            role=data.get('role', SystemRole.CASHIER),
+            title=data.get('title', ''),
+            salary_monthly=data.get('salary_monthly', Decimal('0.00')),
+            assigned_pages=data.get('assigned_pages', []),
+            temporary_password=data.get('temporary_password', ''),
+            pin_code=data.get('pin_code', ''),
+            is_active=data.get('is_active', True),
+            avatar=data.get('avatar', None),
+        )
+        return Response(EmployeeSerializer(employee).data, status=status.HTTP_201_CREATED)
+
+
+class EmployeeDetailAPIView(APIView):
+    """
+    GET, PATCH, DELETE for a specific employee profile.
+    Enforces tenant branch isolation.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def _get_employee(self, request, pk):
+        employee = Employee.objects.select_related('assigned_outlet', 'user').filter(id=pk).first()
+        if not employee:
+            return None, Response({"detail": "Employee not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        user = request.user
+        if not user.is_superuser:
+            if user.branch and employee.assigned_outlet_id != user.branch_id:
+                return None, Response({"detail": "Permission denied. Cross-outlet access prohibited."}, status=status.HTTP_403_FORBIDDEN)
+            elif user.restaurant and employee.assigned_outlet.restaurant_id != user.restaurant_id:
+                return None, Response({"detail": "Permission denied. Cross-brand access prohibited."}, status=status.HTTP_403_FORBIDDEN)
+
+        return employee, None
+
+    def get(self, request, pk):
+        employee, error_res = self._get_employee(request, pk)
+        if error_res:
+            return error_res
+        return Response(EmployeeSerializer(employee).data, status=status.HTTP_200_OK)
+
+    def patch(self, request, pk):
+        employee, error_res = self._get_employee(request, pk)
+        if error_res:
+            return error_res
+
+        serializer = EmployeeUpdateSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+
+        updated_employee = employee_update(employee, **serializer.validated_data)
+        return Response(EmployeeSerializer(updated_employee).data, status=status.HTTP_200_OK)
+
+    def delete(self, request, pk):
+        employee, error_res = self._get_employee(request, pk)
+        if error_res:
+            return error_res
+
+        if employee.role == SystemRole.SUPER_ADMIN:
+            return Response(
+                {"detail": "Cannot delete root SUPER_ADMIN account."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        employee_delete(employee)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class StaffPinLoginAPIView(APIView):
+    """
+    POST /api/v1/auth/staff-pin-login/
+    Rapid POS terminal switch via 4-to-6 digit PIN code.
+    Authenticates staff instantly for their outlet without requiring full passwords.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = StaffPinLoginSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        outlet_id = data.get('outlet_id')
+        pin_code = data.get('pin_code')
+
+        branch = None
+        if outlet_id:
+            branch = (
+                Branch.objects.filter(id=outlet_id).first() if str(outlet_id).isdigit() else None
+            ) or Branch.objects.filter(branch_code=outlet_id).first()
+
+        if not branch:
+            if request.user.is_authenticated and request.user.branch:
+                branch = request.user.branch
+            else:
+                branch = Branch.objects.first()
+
+        if not branch:
+            return Response({"detail": "Outlet not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        employees = Employee.objects.filter(
+            assigned_outlet=branch,
+            is_active=True
+        ).exclude(pin_hash__isnull=True).exclude(pin_hash="")
+
+        matched_employee = None
+        for emp in employees:
+            if emp.check_pin(pin_code):
+                matched_employee = emp
+                break
+
+        if not matched_employee:
+            return Response(
+                {"detail": "Invalid PIN code for this outlet."},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        tokens = generate_auth_tokens(matched_employee.user)
+        return Response({
+            "access": tokens['access'],
+            "refresh": tokens['refresh'],
+            "employee": {
+                "id": matched_employee.id,
+                "name": matched_employee.name,
+                "role": matched_employee.role,
+                "title": matched_employee.title,
+                "assigned_pages": matched_employee.assigned_pages,
+            },
+            "outlet": {
+                "id": branch.id,
+                "name": branch.name,
+                "code": branch.branch_code,
+            }
+        }, status=status.HTTP_200_OK)
+
 
