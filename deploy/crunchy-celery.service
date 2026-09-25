@@ -1,0 +1,14 @@
+[Unit]
+Description=Crunchy Bag Celery Worker
+After=network.target redis-server.service
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/crunchy_back
+ExecStart=/opt/crunchy_back/.venv/bin/celery -A crunchy_backend worker -l info --concurrency=2
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -120,7 +120,7 @@ class TableQRResolveAPIView(APIView):
         if not table:
             return Response(
                 {"detail": "Invalid or expired Table QR code. Please scan the QR code on your table again."},
-                status=status.HTTP_404_NOT_FOUND
+                status=status.HTTP_400_BAD_REQUEST
             )
 
         serializer = TableQRResolvedContextSerializer(table)

@@ -21,7 +21,7 @@ class PaymentSettleAPIView(APIView):
     Settles an order, closes table session, generates Fiscal Tax Receipt,
     and broadcasts live WebSocket notification with Zero Page Reload!
     """
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         serializer = PaymentSettleRequestSerializer(data=request.data)

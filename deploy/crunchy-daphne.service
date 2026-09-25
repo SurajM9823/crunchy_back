@@ -1,0 +1,14 @@
+[Unit]
+Description=Crunchy Bag Daphne ASGI Server
+After=network.target redis-server.service
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/crunchy_back
+ExecStart=/opt/crunchy_back/.venv/bin/daphne -b 127.0.0.1 -p 8010 crunchy_backend.asgi:application
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
