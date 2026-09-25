@@ -147,6 +147,7 @@ class PaymentsAndInvoicingTests(TestCase):
         self.assertIn("GRAND TOTAL:", receipt_text)
 
     def test_payment_settle_api(self):
+        self.client.force_authenticate(user=self.cashier)
         res = self.client.post('/api/v1/payments/settle/', {
             'order_id': self.order.id,
             'payment_method': 'ESEWA',
