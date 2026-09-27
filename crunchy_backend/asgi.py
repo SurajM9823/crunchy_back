@@ -17,14 +17,12 @@ import apps.user_accounts.routing
 import apps.restaurants.routing
 import apps.catalog.routing
 import apps.orders.routing
-import apps.inventory.routing
 
 combined_websocket_urlpatterns = (
     apps.user_accounts.routing.websocket_urlpatterns
     + apps.restaurants.routing.websocket_urlpatterns
     + apps.catalog.routing.websocket_urlpatterns
     + apps.orders.routing.websocket_urlpatterns
-    + apps.inventory.routing.websocket_urlpatterns
 )
 
 application = ProtocolTypeRouter({
