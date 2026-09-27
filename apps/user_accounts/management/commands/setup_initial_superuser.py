@@ -35,6 +35,6 @@ class Command(BaseCommand):
             f"  - Email:    {superuser.email}\n"
             f"  - Phone:    {superuser.phone_number}\n"
             f"  - Password: {password}\n"
-            f"You can now log in using any of the three identifiers at /superuser/login/ or /admin/."
+            f"You can now log in using any of the three identifiers at /superuser/login/ or /django-admin/."
         ))
 

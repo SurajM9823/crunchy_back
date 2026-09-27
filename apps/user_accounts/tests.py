@@ -92,7 +92,7 @@ class UserAuthenticationTests(TestCase):
             'identifier': 'admin@crunchy.local',
             'password': self.password,
         })
-        self.assertRedirects(response, '/admin/')
+        self.assertRedirects(response, '/django-admin/')
 
         # Logout
         self.client.get(reverse('superuser-logout'))
@@ -102,7 +102,7 @@ class UserAuthenticationTests(TestCase):
             'identifier': '+1 (555) 019-2831',
             'password': self.password,
         })
-        self.assertRedirects(response, '/admin/')
+        self.assertRedirects(response, '/django-admin/')
 
         # Non-staff customer cannot log into superuser portal
         self.client.get(reverse('superuser-logout'))

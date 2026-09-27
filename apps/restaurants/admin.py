@@ -82,7 +82,7 @@ class RestaurantAdmin(admin.ModelAdmin):
     def admin_link(self, obj):
         if obj.admin:
             return format_html(
-                '<a href="/admin/user_accounts/user/{}/change/"><strong>{}</strong> ({})</a>',
+                '<a href="/django-admin/user_accounts/user/{}/change/"><strong>{}</strong> ({})</a>',
                 obj.admin.id,
                 obj.admin.username,
                 obj.admin.get_role_display(),
@@ -291,7 +291,7 @@ class BranchAdmin(admin.ModelAdmin):
     @admin.display(description=_('Parent Brand'))
     def restaurant_link(self, obj):
         return format_html(
-            '<a href="/admin/restaurants/restaurant/{}/change/"><strong>{}</strong></a>',
+            '<a href="/django-admin/restaurants/restaurant/{}/change/"><strong>{}</strong></a>',
             obj.restaurant.id,
             obj.restaurant.name
         )
@@ -316,7 +316,7 @@ class BranchAdmin(admin.ModelAdmin):
     def manager_display(self, obj):
         if obj.manager:
             return format_html(
-                '<a href="/admin/user_accounts/user/{}/change/"><strong>{}</strong></a>',
+                '<a href="/django-admin/user_accounts/user/{}/change/"><strong>{}</strong></a>',
                 obj.manager.id,
                 obj.manager.username or obj.manager.email or obj.manager.phone_number
             )

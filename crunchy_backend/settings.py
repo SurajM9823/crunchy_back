@@ -250,7 +250,7 @@ else:
 
 # Login URLs
 LOGIN_URL = '/superuser/login/'
-LOGIN_REDIRECT_URL = '/admin/'
+LOGIN_REDIRECT_URL = '/django-admin/'
 LOGOUT_REDIRECT_URL = '/superuser/login/'
 
 # --------------------------------------------------------------------------

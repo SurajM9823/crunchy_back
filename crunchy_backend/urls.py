@@ -7,7 +7,7 @@ from django.urls import path, include
 from django.views.generic import RedirectView
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
+    path('django-admin/', admin.site.urls),
     # Direct access to superuser authentication portal and account management
     path('', include('apps.user_accounts.urls')),
     # Restaurant Brands & Franchise Outlets API

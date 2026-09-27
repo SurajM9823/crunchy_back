@@ -33,7 +33,7 @@ class SuperuserLoginView(View):
 
     def get(self, request):
         if request.user.is_authenticated and (request.user.is_superuser or request.user.is_staff):
-            return redirect('/admin/')
+            return redirect('/django-admin/')
         return render(request, self.template_name)
 
     def post(self, request):
@@ -47,7 +47,9 @@ class SuperuserLoginView(View):
             if not remember_me:
                 # Session expires on browser close
                 request.session.set_expiry(0)
-            next_url = request.GET.get('next') or request.POST.get('next') or '/admin/'
+            next_url = request.GET.get('next') or request.POST.get('next') or '/django-admin/'
+            if next_url in ('/admin/', '/admin'):
+                next_url = '/django-admin/'
             return redirect(next_url)
 
         return render(request, self.template_name, {
