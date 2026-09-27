@@ -53,21 +53,45 @@ class RestaurantAdmin(admin.ModelAdmin):
         (
             _('Brand Identity'),
             {
-                'fields': ('name', 'slug', 'admin', 'logo_url', 'description'),
+                'fields': ('name', 'legal_name', 'slug', 'admin', 'logo', 'logo_url', 'description'),
                 'description': _('Select or assign the primary Restaurant Owner/Admin user for this brand.'),
             },
         ),
         (
-            _('Statutory & Billing'),
+            _('Contact & Address'),
             {
-                'fields': ('pan_number',),
-                'description': _('Statutory PAN or Tax registration number used for fiscal receipts.'),
+                'fields': ('address', 'phone', 'email', 'website'),
             },
         ),
         (
-            _('Contact & Web'),
+            _('Fiscal & IRD Nepal Tax Settings'),
             {
-                'fields': ('phone', 'email', 'website'),
+                'fields': (
+                    'pan_number',
+                    'fiscal_year',
+                    'ird_bill_prefix',
+                    'vat_rate_percent',
+                    'is_vat_enabled',
+                    'service_charge_percent',
+                    'is_service_charge_enabled',
+                    'ird_software_id',
+                    'ird_enable_realtime_sync',
+                ),
+                'description': _('Statutory PAN, IRD Nepal 13% VAT, and e-billing synchronization.'),
+            },
+        ),
+        (
+            _('Currency & Payment Methods'),
+            {
+                'fields': (
+                    'currency',
+                    'currency_symbol',
+                    'enable_cash',
+                    'enable_card',
+                    'enable_fonepay',
+                    'enable_esewa',
+                    'enable_khalti',
+                ),
             },
         ),
         (

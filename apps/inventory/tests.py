@@ -11,12 +11,28 @@ from apps.catalog.models import OutletProductOverride
 from apps.catalog.services import category_create, product_create, variant_create
 from apps.orders.services import order_create_or_append_tab
 
-from .models import InventoryItem, RecipeItem, StockTransaction, StockTransactionType, UnitOfMeasure
+from .models import (
+    InventoryItem,
+    RecipeItem,
+    StockTransaction,
+    StockTransactionType,
+    UnitOfMeasure,
+    Supplier,
+    PurchaseInvoice,
+    PurchaseInvoiceItem,
+    StockMovementLedger,
+    StockMovementType,
+    DaybookAccountEntry,
+    PaymentMethod,
+    PaymentStatus,
+)
 from .services import (
     inventory_item_create,
     inventory_item_restock,
     recipe_item_create,
     deduct_inventory_for_order,
+    purchase_invoice_create,
+    inventory_reconcile_audit,
 )
 from .selectors import list_low_stock_items, get_inventory_item_by_sku
 
@@ -103,7 +119,8 @@ class AtomicInventoryAndRecipeTests(TestCase):
         )
         self.buns.refresh_from_db()
         self.assertEqual(self.buns.current_stock, Decimal('70.000'))
-        self.assertEqual(self.buns.cost_per_unit, Decimal('26.00'))
+        # Moving avg: (50*25 + 20*26) / 70 = (1250 + 520) / 70 = 1770 / 70 = 25.29
+        self.assertEqual(self.buns.cost_per_unit, Decimal('25.29'))
 
         # Check StockTransaction audit log
         latest_txn = self.buns.transactions.order_by('-id').first()
@@ -129,6 +146,10 @@ class AtomicInventoryAndRecipeTests(TestCase):
 
         self.assertEqual(self.buns.current_stock, Decimal('47.000'))
         self.assertEqual(self.patties.current_stock, Decimal('4.000'))
+
+        # Also check StockMovementLedger
+        mov = StockMovementLedger.objects.filter(branch=self.branch, reason='SALE_DEDUCTION')
+        self.assertTrue(mov.exists())
 
     def test_auto_out_of_stock_trigger_when_stock_depleted(self):
         # Current stock of patties is 10
@@ -181,5 +202,235 @@ class AtomicInventoryAndRecipeTests(TestCase):
         self.patties.refresh_from_db()
         # 10 + 25 = 35
         self.assertEqual(self.patties.current_stock, Decimal('35.000'))
-        self.assertEqual(self.patties.cost_per_unit, Decimal('125.00'))
+        # Moving avg: (10*120 + 25*125) / 35 = (1200 + 3125) / 35 = 4325 / 35 = 123.57
+        self.assertEqual(self.patties.cost_per_unit, Decimal('123.57'))
 
+    def test_supplier_list_and_auto_create_api(self):
+        self.client.force_authenticate(user=self.manager)
+
+        # 1. Create a supplier
+        res = self.client.post('/api/v1/inventory/suppliers/', {
+            'name': 'Himalayan Dairy Suppliers',
+            'phone': '9841000000',
+            'pan_number': '300123456',
+            'address': 'Pulchowk, Lalitpur',
+        }, format='json')
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(res.data['name'], 'Himalayan Dairy Suppliers')
+        sup_id = res.data['id']
+
+        # 2. Search suppliers
+        search_res = self.client.get('/api/v1/inventory/suppliers/?search=Himalayan')
+        self.assertEqual(search_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(search_res.data), 1)
+        self.assertEqual(search_res.data[0]['id'], sup_id)
+
+    def test_category_list_and_auto_create_api(self):
+        self.client.force_authenticate(user=self.manager)
+
+        # 1. Create category
+        res = self.client.post('/api/v1/inventory/categories/', {
+            'name': 'Bakery & Breads',
+            'description': 'Buns, tortillas, and bread loaves',
+        }, format='json')
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(res.data['name'], 'Bakery & Breads')
+
+        # 2. Search categories
+        search_res = self.client.get('/api/v1/inventory/categories/?search=Bakery')
+        self.assertEqual(search_res.status_code, status.HTTP_200_OK)
+        self.assertTrue(len(search_res.data) >= 1)
+
+    def test_inward_purchase_invoice_and_weighted_average_cost(self):
+        self.client.force_authenticate(user=self.manager)
+
+        # Buns start at stock 50.000, cost 25.00
+        # Inward purchase: 50 buns at 35.00
+        # Expected new stock: 100.000
+        # Expected weighted avg cost: ((50 * 25) + (50 * 35)) / 100 = (1250 + 1750) / 100 = 30.00
+        payload = {
+            'invoice_number': 'INV-2026-001',
+            'supplier_name': 'Baker King Pvt Ltd',
+            'supplier_phone': '9851122334',
+            'purchase_date': '2026-09-27',
+            'payment_method': 'CASH',
+            'payment_status': 'PAID',
+            'subtotal': '1750.00',
+            'total_amount': '1750.00',
+            'paid_amount': '1750.00',
+            'due_amount': '0.00',
+            'items': [
+                {
+                    'item_id': str(self.buns.id),
+                    'item_name': 'Brioche Bun',
+                    'quantity': '50.000',
+                    'unit': 'PCS',
+                    'unit_cost': '35.00',
+                    'discount': '0.00',
+                    'total_cost': '1750.00',
+                }
+            ]
+        }
+
+        res = self.client.post('/api/v1/inventory/purchases/', payload, format='json')
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(res.data['invoice_number'], 'INV-2026-001')
+
+        self.buns.refresh_from_db()
+        self.assertEqual(self.buns.current_stock, Decimal('100.000'))
+        self.assertEqual(self.buns.cost_per_unit, Decimal('30.00'))
+        self.assertEqual(self.buns.supplier_name, 'Baker King Pvt Ltd')
+
+        # Verify Movement Ledger
+        mov = StockMovementLedger.objects.filter(
+            item=self.buns,
+            reason='PURCHASE',
+            reference_id='INV-2026-001',
+        ).first()
+        self.assertIsNotNone(mov)
+        self.assertEqual(mov.quantity, Decimal('50.000'))
+        self.assertEqual(mov.previous_stock, Decimal('50.000'))
+        self.assertEqual(mov.new_stock, Decimal('100.000'))
+
+    def test_inward_purchase_with_new_supplier_and_new_sku_on_the_fly(self):
+        self.client.force_authenticate(user=self.manager)
+
+        # On-the-fly registration of a completely new supplier and brand-new item
+        payload = {
+            'invoice_number': 'INV-FRESH-99',
+            'supplier_name': 'Green Farm Fresh Veggies',
+            'supplier_phone': '9801234567',
+            'payment_method': 'CREDIT',
+            'subtotal': '2400.00',
+            'discount_amount': '0.00',
+            'total_amount': '2400.00',
+            'paid_amount': '0.00',
+            'due_amount': '2400.00',
+            'items': [
+                {
+                    'name': 'Fresh Iceberg Lettuce',
+                    'category': 'Fresh Produce',
+                    'quantity': '20.000',
+                    'unit': 'KG',
+                    'unit_cost': '120.00',
+                    'discount': '0.00',
+                    'total_cost': '2400.00',
+                }
+            ]
+        }
+
+        res = self.client.post('/api/v1/inventory/purchases/', payload, format='json')
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+
+        # Verify supplier auto-created with credit balance
+        sup = Supplier.objects.filter(branch=self.branch, name='Green Farm Fresh Veggies').first()
+        self.assertIsNotNone(sup)
+        self.assertEqual(sup.phone, '9801234567')
+        self.assertEqual(sup.credit_balance, Decimal('2400.00'))
+
+        # Verify Daybook Account Entry created for credit purchase
+        dbk = DaybookAccountEntry.objects.filter(purchase__invoice_number='INV-FRESH-99').first()
+        self.assertIsNotNone(dbk)
+        self.assertEqual(dbk.cr_amount, Decimal('2400.00'))
+        self.assertEqual(dbk.party, sup)
+
+        # Verify new SKU auto-created
+        new_item = InventoryItem.objects.filter(branch=self.branch, name='Fresh Iceberg Lettuce').first()
+        self.assertIsNotNone(new_item)
+        self.assertEqual(new_item.current_stock, Decimal('20.000'))
+        self.assertEqual(new_item.cost_per_unit, Decimal('120.00'))
+        self.assertEqual(new_item.unit, 'KG')
+        self.assertEqual(new_item.category.name, 'Fresh Produce')
+
+    def test_purchase_idempotency_key(self):
+        self.client.force_authenticate(user=self.manager)
+
+        payload = {
+            'invoice_number': 'INV-IDEM-001',
+            'supplier_name': 'Baker King Pvt Ltd',
+            'subtotal': '500.00',
+            'total_amount': '500.00',
+            'paid_amount': '500.00',
+            'items': [
+                {
+                    'item_id': str(self.buns.id),
+                    'item_name': 'Brioche Bun',
+                    'quantity': '10.000',
+                    'unit': 'PCS',
+                    'unit_cost': '50.00',
+                    'total_cost': '500.00',
+                }
+            ]
+        }
+
+        # First request with Idempotency-Key
+        res1 = self.client.post(
+            '/api/v1/inventory/purchases/',
+            payload,
+            format='json',
+            HTTP_IDEMPOTENCY_KEY='idem-key-abc-123',
+        )
+        self.assertEqual(res1.status_code, status.HTTP_201_CREATED)
+        invoice_id = res1.data['id']
+
+        self.buns.refresh_from_db()
+        stock_after_first = self.buns.current_stock
+
+        # Second request with SAME Idempotency-Key (simulating network retry)
+        res2 = self.client.post(
+            '/api/v1/inventory/purchases/',
+            payload,
+            format='json',
+            HTTP_IDEMPOTENCY_KEY='idem-key-abc-123',
+        )
+        self.assertEqual(res2.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(res2.data['id'], invoice_id)
+
+        # Stock must NOT be duplicated!
+        self.buns.refresh_from_db()
+        self.assertEqual(self.buns.current_stock, stock_after_first)
+
+    def test_physical_stock_audit_reconciliation(self):
+        self.client.force_authenticate(user=self.manager)
+
+        # Buns currently at 50.000. Floor audit reports actual physical count is 42.000.
+        res = self.client.post('/api/v1/inventory/audits/reconcile/', {
+            'items': [
+                {
+                    'item_id': self.buns.id,
+                    'physical_stock': '42.000',
+                    'note': 'Count variance on shelf 3',
+                }
+            ]
+        }, format='json')
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data['status'], 'success')
+
+        self.buns.refresh_from_db()
+        self.assertEqual(self.buns.current_stock, Decimal('42.000'))
+
+        # Verify StockMovementLedger logged variance
+        mov = StockMovementLedger.objects.filter(
+            item=self.buns,
+            reason='AUDIT_ADJUSTMENT',
+        ).first()
+        self.assertIsNotNone(mov)
+        self.assertEqual(mov.type, StockMovementType.DECREASE)
+        self.assertEqual(mov.quantity, Decimal('8.000'))
+        self.assertEqual(mov.previous_stock, Decimal('50.000'))
+        self.assertEqual(mov.new_stock, Decimal('42.000'))
+
+    def test_stock_catalog_metrics_endpoint(self):
+        self.client.force_authenticate(user=self.manager)
+
+        # self.buns: 50 * 25.00 = 1250.00
+        # self.patties: 10 * 120.00 = 1200.00
+        # total_valuation = 2450.00
+        res = self.client.get('/api/v1/inventory/items/')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data['status'], 'success')
+        self.assertEqual(res.data['data']['count'], 2)
+        self.assertEqual(res.data['data']['low_stock_count'], 0)
+        self.assertEqual(res.data['data']['total_valuation'], 2450.00)
+        self.assertEqual(len(res.data['data']['results']), 2)

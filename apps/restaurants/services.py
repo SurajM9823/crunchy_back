@@ -312,3 +312,62 @@ def outlet_update_operational_status(
 
     return branch
 
+
+@transaction.atomic
+def organization_update(
+    *,
+    restaurant: Restaurant,
+    updated_by,
+    **fields,
+) -> Restaurant:
+    """
+    Atomic service to update organization brand identity, fiscal IRD rules,
+    and payment gateway settings.
+    Enforces multi-tenant isolation and data consistency.
+    """
+    allowed_fields = {
+        'name',
+        'legal_name',
+        'pan_number',
+        'phone',
+        'email',
+        'website',
+        'address',
+        'description',
+        'currency',
+        'currency_symbol',
+        'vat_rate_percent',
+        'is_vat_enabled',
+        'service_charge_percent',
+        'is_service_charge_enabled',
+        'ird_bill_prefix',
+        'fiscal_year',
+        'ird_software_id',
+        'ird_enable_realtime_sync',
+        'enable_cash',
+        'enable_card',
+        'enable_fonepay',
+        'enable_esewa',
+        'enable_khalti',
+        'logo',
+        'logo_url',
+    }
+
+    logo_file = fields.get('logo')
+    if logo_file:
+        restaurant.logo = logo_file
+
+    for field, value in fields.items():
+        if field in allowed_fields and field != 'logo':
+            setattr(restaurant, field, value)
+
+    restaurant.save()
+
+    # If logo file was saved and has a URL, update logo_url field if blank or changed
+    if restaurant.logo and hasattr(restaurant.logo, 'url'):
+        restaurant.logo_url = restaurant.logo.url
+        Restaurant.objects.filter(pk=restaurant.pk).update(logo_url=restaurant.logo.url)
+
+    return restaurant
+
+

@@ -4,12 +4,16 @@ URL configuration for crunchy_backend project.
 
 from django.contrib import admin
 from django.urls import path, include
-from django.views.generic import RedirectView
+from django.conf import settings
+from django.conf.urls.static import static
+from apps.restaurants.views import OrganizationAPIView
 
 urlpatterns = [
     path('django-admin/', admin.site.urls),
     # Direct access to superuser authentication portal and account management
     path('', include('apps.user_accounts.urls')),
+    # Organization Profile, Fiscal Tax & Brand Logo Upload
+    path('api/v1/organization/', OrganizationAPIView.as_view(), name='organization-settings'),
     # Restaurant Brands & Franchise Outlets API
     path('api/v1/restaurants/', include('apps.restaurants.urls')),
     # Menu & Product Catalog Engine
@@ -25,4 +29,6 @@ urlpatterns = [
     # Delivery Fleet & Live Dispatch Engine
     path('api/v1/delivery/', include('apps.delivery.urls')),
 ]
+
+urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
