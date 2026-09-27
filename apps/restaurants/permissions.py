@@ -1,5 +1,5 @@
 from rest_framework.permissions import BasePermission
-from apps.user_accounts.models import UserRole
+from apps.user_accounts.models import UserRole, SystemRole, AdminSubPage
 
 
 class IsOutletAdminOrStaff(BasePermission):
@@ -57,4 +57,33 @@ class IsOutletAdminOnly(BasePermission):
             return True
 
         return request.user.role in (UserRole.BRANCH_MANAGER, UserRole.RESTAURANT_OWNER) or request.user.is_staff
+
+
+class IsOrganizationAdminOrManager(BasePermission):
+    """
+    Strict permission allowing Outlet Admins, Store Managers, Brand Owners,
+    and Superusers to access and update Organization profile and fiscal rules.
+    Also verifies RBAC 'organization' module permission for employees.
+    """
+
+    def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated and request.user.is_active):
+            return False
+
+        if request.user.is_superuser:
+            return True
+
+        if request.user.role in (UserRole.RESTAURANT_OWNER, UserRole.BRANCH_MANAGER) or request.user.is_staff:
+            return True
+
+        # Check employee RBAC
+        employee = getattr(request.user, 'employee_profile', None)
+        if employee and employee.is_active:
+            if employee.role in (SystemRole.SUPER_ADMIN, SystemRole.STORE_MANAGER):
+                return True
+            if AdminSubPage.ORGANIZATION.value in (employee.assigned_pages or []):
+                return True
+
+        return False
+
 
