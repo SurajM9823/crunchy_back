@@ -1,4 +1,3 @@
-from decimal import Decimal
 from django.db import models
 from django.conf import settings
 from django.utils.text import slugify
@@ -17,13 +16,6 @@ class Restaurant(TimeStampedModel):
         unique=True,
         db_index=True,
         help_text=_('Unique brand name of the restaurant (e.g., "Crunchy Bag")'),
-    )
-    legal_name = models.CharField(
-        _('registered legal entity name'),
-        max_length=200,
-        blank=True,
-        default='',
-        help_text=_('Official registered legal company name, e.g. "Crunchy Bag Food & Hospitality Pvt. Ltd."'),
     )
     slug = models.SlugField(
         _('brand slug'),
@@ -62,20 +54,6 @@ class Restaurant(TimeStampedModel):
         blank=True,
         default='',
     )
-    address = models.CharField(
-        _('head office address'),
-        max_length=255,
-        blank=True,
-        default='',
-        help_text=_('Registered address / Head office location'),
-    )
-    logo = models.ImageField(
-        _('brand logo file'),
-        upload_to='organization/logos/',
-        blank=True,
-        null=True,
-        help_text=_('Uploaded brand logo image file'),
-    )
     logo_url = models.URLField(
         _('brand logo URL'),
         blank=True,
@@ -86,96 +64,6 @@ class Restaurant(TimeStampedModel):
         blank=True,
         default='',
     )
-    currency = models.CharField(
-        _('currency code'),
-        max_length=10,
-        default='NPR',
-        help_text=_('Operational currency ISO code (e.g. NPR)'),
-    )
-    currency_symbol = models.CharField(
-        _('currency symbol'),
-        max_length=10,
-        default='रु',
-        help_text=_('Currency symbol (e.g. रु or Rs.)'),
-    )
-
-    # Fiscal & Tax Rules (Inland Revenue Department - IRD Nepal)
-    vat_rate_percent = models.DecimalField(
-        _('VAT rate (%)'),
-        max_digits=5,
-        decimal_places=2,
-        default=Decimal('13.00'),
-        help_text=_('Inland Revenue Department standard VAT rate (typically 13%)'),
-    )
-    is_vat_enabled = models.BooleanField(
-        _('is VAT enabled'),
-        default=True,
-        help_text=_('Whether statutory VAT is charged on bills'),
-    )
-    service_charge_percent = models.DecimalField(
-        _('service charge (%)'),
-        max_digits=5,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text=_('Hospitality service charge percentage (e.g. 0% or 10%)'),
-    )
-    is_service_charge_enabled = models.BooleanField(
-        _('is service charge enabled'),
-        default=False,
-        help_text=_('Whether restaurant service charge is levied on dining orders'),
-    )
-    ird_bill_prefix = models.CharField(
-        _('IRD invoice bill prefix'),
-        max_length=20,
-        default='CB-INV-',
-        help_text=_('Prefix for statutory fiscal bills (e.g. "CB-INV-")'),
-    )
-    fiscal_year = models.CharField(
-        _('current fiscal year'),
-        max_length=20,
-        default='2081/82',
-        help_text=_('Nepal Bikram Sambat fiscal accounting year (e.g. 2081/82)'),
-    )
-    ird_software_id = models.CharField(
-        _('IRD software identifier'),
-        max_length=64,
-        blank=True,
-        default='',
-        help_text=_('Registered CBMS IRD software registration ID'),
-    )
-    ird_enable_realtime_sync = models.BooleanField(
-        _('enable IRD real-time sync'),
-        default=False,
-        help_text=_('Flag to sync bills in real-time with IRD CBMS portal'),
-    )
-
-    # Payment Methods & Gateways
-    enable_cash = models.BooleanField(
-        _('enable cash payment'),
-        default=True,
-        help_text=_('Accept physical cash at cashier counter'),
-    )
-    enable_card = models.BooleanField(
-        _('enable card / POS swipe'),
-        default=True,
-        help_text=_('Accept credit/debit card swipe POS terminal'),
-    )
-    enable_fonepay = models.BooleanField(
-        _('enable Fonepay QR'),
-        default=True,
-        help_text=_('Accept dynamic and static Fonepay QR network payments'),
-    )
-    enable_esewa = models.BooleanField(
-        _('enable eSewa wallet'),
-        default=True,
-        help_text=_('Accept eSewa digital wallet QR and web checkout'),
-    )
-    enable_khalti = models.BooleanField(
-        _('enable Khalti wallet'),
-        default=True,
-        help_text=_('Accept Khalti digital wallet QR and web checkout'),
-    )
-
     is_active = models.BooleanField(
         _('is active'),
         default=True,

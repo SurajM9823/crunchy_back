@@ -2,7 +2,6 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated, AllowAny
-from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.core.exceptions import ValidationError
 
 from .models import Restaurant, Branch
@@ -14,7 +13,6 @@ from .selectors import (
     get_branch_by_id,
     get_branch_by_code,
     get_outlet_live_status,
-    get_organization_for_user,
 )
 from .services import (
     restaurant_create,
@@ -22,7 +20,6 @@ from .services import (
     restaurant_update,
     branch_update,
     outlet_update_operational_status,
-    organization_update,
 )
 from .serializers import (
     RestaurantListSerializer,
@@ -30,9 +27,8 @@ from .serializers import (
     RestaurantCreateSerializer,
     BranchSerializer,
     BranchCreateSerializer,
-    OrganizationSerializer,
 )
-from .permissions import IsOutletAdminOrStaff, IsOutletAdminOnly, IsOrganizationAdminOrManager
+from .permissions import IsOutletAdminOrStaff, IsOutletAdminOnly
 
 
 class RestaurantListCreateAPIView(APIView):
@@ -312,48 +308,4 @@ class OutletDashboardSummaryAPIView(APIView):
             return Response({"detail": "Outlet not found."}, status=status.HTTP_404_NOT_FOUND)
 
         return Response(status_data, status=status.HTTP_200_OK)
-
-
-class OrganizationAPIView(APIView):
-    """
-    GET /api/v1/organization/ -> Retrieve authenticated user's organization profile & fiscal rules.
-    PATCH /api/v1/organization/ -> Update organization brand, IRD fiscal rules, logo image, payment methods.
-    Supports multipart/form-data for brand logo image uploads and JSON for profile updates.
-    """
-    parser_classes = [MultiPartParser, FormParser, JSONParser]
-    permission_classes = [IsAuthenticated, IsOrganizationAdminOrManager]
-
-    def get(self, request):
-        org = get_organization_for_user(request.user)
-        if not org:
-            return Response(
-                {"detail": "No organization profile associated with your user account."},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        serializer = OrganizationSerializer(org, context={'request': request})
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
-    def patch(self, request):
-        org = get_organization_for_user(request.user)
-        if not org:
-            return Response(
-                {"detail": "No organization profile associated with your user account."},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
-        serializer = OrganizationSerializer(org, data=request.data, partial=True, context={'request': request})
-        serializer.is_valid(raise_exception=True)
-
-        updated_org = organization_update(
-            restaurant=org,
-            updated_by=request.user,
-            **serializer.validated_data
-        )
-
-        output_serializer = OrganizationSerializer(updated_org, context={'request': request})
-        return Response(output_serializer.data, status=status.HTTP_200_OK)
-
-    def put(self, request):
-        return self.patch(request)
-
 

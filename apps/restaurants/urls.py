@@ -7,13 +7,9 @@ from .views import (
     OutletCurrentDetailAPIView,
     OutletStatusToggleAPIView,
     OutletDashboardSummaryAPIView,
-    OrganizationAPIView,
 )
 
 urlpatterns = [
-    # Organization Profile, Fiscal Tax & Brand Identity
-    path('organization/', OrganizationAPIView.as_view(), name='restaurant-organization-settings'),
-
     # Outlet Admin Operations (Current Admin Scoped)
     path('outlets/me/', OutletCurrentDetailAPIView.as_view(), name='outlet-me'),
     path('outlets/me/toggle-orders/', OutletStatusToggleAPIView.as_view(), name='outlet-toggle-orders'),

@@ -162,24 +162,6 @@ class User(AbstractUser, TimeStampedModel):
         if self.phone_number:
             self.phone_number = normalize_phone_number(self.phone_number)
 
-    @property
-    def organization(self):
-        """
-        Returns the parent Restaurant brand (Organization) for this user.
-        Resolves via direct restaurant link, assigned branch, employee profile,
-        or superuser fallback.
-        """
-        if self.restaurant:
-            return self.restaurant
-        if self.branch and self.branch.restaurant:
-            return self.branch.restaurant
-        if hasattr(self, 'employee_profile') and self.employee_profile and self.employee_profile.assigned_outlet:
-            return self.employee_profile.assigned_outlet.restaurant
-        if self.is_superuser:
-            from apps.restaurants.models import Restaurant
-            return Restaurant.objects.first()
-        return None
-
 
 class SystemRole(models.TextChoices):
     SUPER_ADMIN = "SUPER_ADMIN", _("Super Admin")

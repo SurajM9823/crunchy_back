@@ -112,30 +112,3 @@ def get_outlet_live_status(branch_id: int) -> Optional[dict]:
     # Cache for 15 seconds (Single-flight protection at 10k scale)
     cache.set(cache_key, status_data, timeout=15)
     return status_data
-
-
-def get_organization_for_user(user) -> Optional[Restaurant]:
-    """
-    Resolves the parent Restaurant brand / Organization belonging to the user.
-    Enforces multi-tenant isolation.
-    """
-    if not user or not user.is_authenticated:
-        return None
-
-    if hasattr(user, 'organization') and user.organization:
-        return user.organization
-
-    if getattr(user, 'restaurant_id', None):
-        return Restaurant.objects.filter(id=user.restaurant_id).first()
-
-    if getattr(user, 'branch_id', None) and user.branch:
-        return user.branch.restaurant
-
-    if hasattr(user, 'employee_profile') and user.employee_profile and user.employee_profile.assigned_outlet:
-        return user.employee_profile.assigned_outlet.restaurant
-
-    if user.is_superuser:
-        return Restaurant.objects.first()
-
-    return None
-
