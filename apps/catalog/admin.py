@@ -11,6 +11,21 @@ from .models import (
 )
 
 
+class CatalogReadOnlyAdmin(admin.ModelAdmin):
+    """Catalog writes go through the menu API, including nested validation and outbox."""
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def has_view_permission(self, request, obj=None):
+        return request.user.is_active and request.user.is_superuser
+
+
 class ProductVariantInline(admin.TabularInline):
     model = ProductVariant
     extra = 1
@@ -22,7 +37,7 @@ class ModifierOptionInline(admin.TabularInline):
 
 
 @admin.register(ModifierGroup)
-class ModifierGroupAdmin(admin.ModelAdmin):
+class ModifierGroupAdmin(CatalogReadOnlyAdmin):
     list_display = ('name', 'product', 'min_selections', 'max_selections', 'required')
     search_fields = ('name', 'product__name')
     list_filter = ('required',)
@@ -30,7 +45,7 @@ class ModifierGroupAdmin(admin.ModelAdmin):
 
 
 @admin.register(Category)
-class CategoryAdmin(admin.ModelAdmin):
+class CategoryAdmin(CatalogReadOnlyAdmin):
     list_display = ('id', 'name', 'icon_name', 'display_order', 'hsn_code', 'is_archived', 'created_at')
     search_fields = ('name', 'id')
     list_filter = ('is_archived',)
@@ -38,7 +53,7 @@ class CategoryAdmin(admin.ModelAdmin):
 
 
 @admin.register(Product)
-class ProductAdmin(admin.ModelAdmin):
+class ProductAdmin(CatalogReadOnlyAdmin):
     list_display = (
         'id',
         'name',
@@ -65,20 +80,20 @@ class ProductAdmin(admin.ModelAdmin):
 
 
 @admin.register(OutletProductOverride)
-class OutletProductOverrideAdmin(admin.ModelAdmin):
+class OutletProductOverrideAdmin(CatalogReadOnlyAdmin):
     list_display = ('branch', 'product', 'is_available', 'price_override', 'updated_at')
     list_filter = ('branch', 'is_available')
     search_fields = ('branch__name', 'product__name')
 
 
 @admin.register(OutletTimePricingSchedule)
-class OutletTimePricingScheduleAdmin(admin.ModelAdmin):
+class OutletTimePricingScheduleAdmin(CatalogReadOnlyAdmin):
     list_display = ('name', 'branch', 'start_time', 'end_time', 'discount_percentage', 'is_active')
     list_filter = ('branch', 'is_active')
 
 
 @admin.register(ProductTimePricing)
-class ProductTimePricingAdmin(admin.ModelAdmin):
+class ProductTimePricingAdmin(CatalogReadOnlyAdmin):
     list_display = ('slot_name', 'product', 'start_time', 'end_time', 'price', 'is_active')
     list_filter = ('is_active',)
 

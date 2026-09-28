@@ -1,5 +1,7 @@
 import json
 from channels.generic.websocket import AsyncWebsocketConsumer
+from channels.db import database_sync_to_async
+from apps.restaurants.models import Branch
 
 
 class CatalogMenuConsumer(AsyncWebsocketConsumer):
@@ -12,6 +14,11 @@ class CatalogMenuConsumer(AsyncWebsocketConsumer):
 
     async def connect(self):
         self.outlet_id = self.scope['url_route']['kwargs'].get('outlet_id')
+        if not str(self.outlet_id).isdigit() or not await database_sync_to_async(
+            Branch.objects.filter(pk=self.outlet_id, is_active=True).exists
+        )():
+            await self.close(code=4404)
+            return
         self.group_name = f"outlet_{self.outlet_id}_menu"
 
         await self.channel_layer.group_add(
@@ -65,8 +72,8 @@ class CatalogMenuConsumer(AsyncWebsocketConsumer):
         Triggered when entire menu or pricing has been altered.
         """
         await self.send(text_data=json.dumps({
+            **{key: event[key] for key in ('event_id', 'event_type', 'aggregate_id', 'outlet_id', 'revision') if key in event},
             'event': 'MENU_UPDATED',
             'branch_id': event['branch_id'],
             'timestamp': event.get('timestamp', ''),
         }))
-

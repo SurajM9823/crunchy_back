@@ -1,259 +1,247 @@
+"""Transactional catalog writes with durable revisions and live-update events."""
 from decimal import Decimal
 from django.db import transaction
-from django.core.cache import cache
-from django.core.exceptions import ValidationError
-from django.utils import timezone
-from asgiref.sync import async_to_sync
-from channels.layers import get_channel_layer
-
-from .models import (
-    Category,
-    Product,
-    ProductVariant,
-    ModifierGroup,
-    ModifierOption,
-    OutletProductOverride,
-)
-
-
-def invalidate_outlet_menu_cache(branch_id: int):
-    """
-    Purges cached menu representations for an outlet across all channels.
-    """
-    channels = ['all', 'pos', 'qr', 'web', 'delivery', 'kiosk']
-    for ch in channels:
-        cache.delete(f"outlet:{branch_id}:menu:{ch}")
-
-
-def broadcast_product_availability_change(branch_id: int, product_id: str, is_available: bool, product_name: str = ""):
-    """
-    Broadcasts real-time WebSocket event to all connected POS, KDS, Kiosk, and QR clients.
-    Zero Page Reload (Rule 3 & Principle 7):
-    Clients reactively update item availability badge without browser refreshes.
-    """
-    channel_layer = get_channel_layer()
-    if channel_layer:
-        payload = {
-            'type': 'product_availability_changed',
-            'product_id': product_id,
-            'product_name': product_name,
-            'is_available': is_available,
-            'branch_id': branch_id,
-            'timestamp': timezone.now().isoformat(),
-        }
-        # Send to outlet menu group and operations group
-        async_to_sync(channel_layer.group_send)(f"outlet_{branch_id}_menu", payload)
-        async_to_sync(channel_layer.group_send)(f"outlet_{branch_id}_operations", payload)
+from django.db.models import F
+from rest_framework.exceptions import ValidationError
+from apps.restaurants.models import Branch, Restaurant
+from apps.inventory.models import RecipeItem, InventoryItem
+from .models import (Category, Product, ProductVariant, ModifierGroup, ModifierOption,
+    OutletProductOverride, OutletTimePricingSchedule, MenuRevision, MenuOutboxEvent)
+from .pricing_engine import round_currency
 
 
 @transaction.atomic
-def category_create(
-    name: str,
-    id: str = None,
-    icon_name: str = "Utensils",
-    display_order: int = 0,
-    hsn_code: str = "",
-) -> Category:
-    category = Category(
-        name=name.strip(),
-        icon_name=icon_name,
-        display_order=display_order,
-        hsn_code=hsn_code.strip(),
-    )
-    if id:
-        category.id = id.strip()
-    category.save()
+def menu_changed(*, restaurant_id=None, branch_id=None):
+    branches = Branch.objects.filter(pk=branch_id) if branch_id else Branch.objects.filter(restaurant_id=restaurant_id)
+    for bid in branches.order_by('pk').values_list('pk', flat=True):
+        state, _ = MenuRevision.objects.get_or_create(branch_id=bid)
+        MenuRevision.objects.filter(pk=bid).update(revision=F('revision') + 1)
+        state.refresh_from_db()
+        MenuOutboxEvent.objects.create(branch_id=bid, revision=state.revision)
+
+
+def invalidate_outlet_menu_cache(branch_id):
+    menu_changed(branch_id=branch_id)
+
+
+def broadcast_product_availability_change(branch_id, product_id, is_available, product_name=''):
+    # Compatibility for inventory mutations: durable publication after commit.
+    menu_changed(branch_id=branch_id)
+
+
+@transaction.atomic
+def category_create(name, restaurant=None, **data):
+    if restaurant is None:
+        candidates = list(Restaurant.objects.all()[:2])
+        if len(candidates) != 1:
+            raise ValidationError('Specify the restaurant for this category.')
+        restaurant = candidates[0]
+    category = Category(name=name.strip(), restaurant=restaurant, **data)
+    category.save(force_insert=True)
+    menu_changed(restaurant_id=category.restaurant_id)
     return category
 
 
 @transaction.atomic
-def category_update(category: Category, **kwargs) -> Category:
-    for key, value in kwargs.items():
-        if hasattr(category, key):
-            setattr(category, key, value)
+def category_update(category, **data):
+    category = Category.objects.select_for_update().get(pk=category.pk)
+    data.pop('id', None)
+    for key, value in data.items():
+        setattr(category, key, value)
     category.save()
+    menu_changed(restaurant_id=category.restaurant_id)
     return category
 
 
-@transaction.atomic
-def product_create(
-    category: Category,
-    name: str,
-    base_price: Decimal,
-    id: str = None,
-    description: str = "",
-    cost_price: Decimal = None,
-    prep_time_minutes: int = 12,
-    calories: int = None,
-    dietary_tags: list = None,
-    images: list = None,
-    is_delivery_eligible: bool = True,
-    is_available: bool = True,
-    is_web_visible: bool = True,
-    show_on_pos: bool = True,
-    show_on_qr: bool = True,
-    discount_percent: Decimal = Decimal('0.00'),
-    requires_kitchen: bool = True,
-    is_counter_direct: bool = False,
-    is_direct_inventory_item: bool = False,
-    is_combo_package: bool = False,
-    combo_discount_type: str = None,
-    combo_discount_value: Decimal = None,
-    combo_original_price: Decimal = None,
-    combo_items: list = None,
-) -> Product:
-    product = Product(
-        category=category,
-        name=name.strip(),
-        base_price=Decimal(str(base_price)),
-        description=description,
-        cost_price=Decimal(str(cost_price)) if cost_price is not None else None,
-        prep_time_minutes=prep_time_minutes,
-        calories=calories,
-        dietary_tags=dietary_tags or [],
-        images=images or [],
-        is_delivery_eligible=is_delivery_eligible,
-        is_available=is_available,
-        is_web_visible=is_web_visible,
-        show_on_pos=show_on_pos,
-        show_on_qr=show_on_qr,
-        discount_percent=Decimal(str(discount_percent)),
-        requires_kitchen=requires_kitchen,
-        is_counter_direct=is_counter_direct,
-        is_direct_inventory_item=is_direct_inventory_item,
-        is_combo_package=is_combo_package,
-        combo_discount_type=combo_discount_type,
-        combo_discount_value=Decimal(str(combo_discount_value)) if combo_discount_value is not None else None,
-        combo_original_price=Decimal(str(combo_original_price)) if combo_original_price is not None else None,
-        combo_items=combo_items or [],
-    )
-    if id:
-        product.id = id.strip()
-    product.save()
+def _combo(product):
+    if not product.is_combo_package:
+        product.combo_items = []
+        product.combo_original_price = None
+        return
+    if not product.combo_items:
+        raise ValidationError({'combo_items': 'A combo needs at least one item.'})
+    ids = [row['product_id'] for row in product.combo_items]
+    items = {p.id: p for p in Product.objects.filter(id__in=ids,
+        category__restaurant_id=product.category.restaurant_id, is_archived=False,
+        category__is_archived=False, is_combo_package=False)}
+    if len(set(ids)) != len(ids) or set(ids) != set(items) or product.pk in ids:
+        raise ValidationError({'combo_items': 'Use unique, active, non-combo products from this restaurant.'})
+    total = sum((items[row['product_id']].base_price * row['quantity'] for row in product.combo_items), Decimal('0'))
+    product.combo_original_price = total
+    if total > Decimal('99999999.99'):
+        raise ValidationError({'combo_items': 'The package value exceeds the supported monetary range.'})
+    value = product.combo_discount_value
+    if value is None or value < 0 or product.combo_discount_type not in dict(Product.COMBO_DISCOUNT_TYPES):
+        raise ValidationError({'combo_discount_value': 'A valid discount type and nonnegative value are required.'})
+    if product.combo_discount_type == 'percentage':
+        if value > 100:
+            raise ValidationError({'combo_discount_value': 'Percentage cannot exceed 100.'})
+        price = total * (1 - value / 100)
+    elif product.combo_discount_type == 'fixed_price':
+        price = value
+    else:
+        price = max(Decimal('0'), total - value)
+    product.base_price = round_currency(price)
+    product.combo_items = [{**row, 'product_name': items[row['product_id']].name,
+        'unit_price': str(items[row['product_id']].base_price)} for row in product.combo_items]
+
+
+def _upsert(model, scope, row):
+    row = dict(row)
+    pk = row.pop('id', None)
+    obj = model.objects.filter(pk=pk, **scope).first() if pk else None
+    if not obj:
+        if pk and model.objects.filter(pk=pk).exists():
+            raise ValidationError('Nested ID belongs to another product.')
+        obj = model(id=pk or '', **scope)
+    for key, value in row.items():
+        setattr(obj, key, value)
+    obj.save()
+    return obj
+
+
+def _sync_rows(model, scope, rows):
+    ids = [row.get('id') for row in rows if row.get('id')]
+    if len(ids) != len(set(ids)):
+        raise ValidationError('Duplicate nested IDs.')
+    keep = [_upsert(model, scope, row).pk for row in rows]
+    model.objects.filter(**scope).exclude(pk__in=keep).delete()
+
+
+def _sync_children(product, data, branch):
+    if 'variants' in data:
+        _sync_rows(ProductVariant, {'product': product}, data['variants'])
+    if 'modifier_groups' in data:
+        keep = []
+        for row in data['modifier_groups']:
+            row = dict(row)
+            options = row.pop('options', [])
+            group = _upsert(ModifierGroup, {'product': product}, row)
+            if group.pk in keep:
+                raise ValidationError('Duplicate modifier groups.')
+            keep.append(group.pk)
+            _sync_rows(ModifierOption, {'group': group}, options)
+        product.modifier_groups.exclude(pk__in=keep).delete()
+    if 'recipe_ingredients' in data:
+        if not branch:
+            raise ValidationError('An outlet is required for inventory recipes.')
+        rows = data['recipe_ingredients']
+        ids = [r['inventory_item_id'] for r in rows]
+        if len(ids) != len(set(ids)) or InventoryItem.objects.filter(pk__in=ids, branch=branch, is_active=True).count() != len(ids):
+            raise ValidationError({'recipe_ingredients': 'Ingredients must be unique and belong to this outlet.'})
+        product.recipe_items.filter(inventory_item__branch=branch, variant__isnull=True).delete()
+        RecipeItem.objects.bulk_create([RecipeItem(product=product, **row) for row in rows])
+
+
+def _save_product(product, data, branch=None, creating=False):
+    linked_id = data.pop('linked_inventory_item', None)
+    nested = {key: data.pop(key) for key in ('variants', 'modifier_groups', 'recipe_ingredients') if key in data}
+    if not creating:
+        data.pop('id', None)
+    data.pop('combo_original_price', None)
+    for key, value in data.items():
+        setattr(product, key, value)
+    if product.category.is_archived:
+        raise ValidationError({'category': 'Restore this category before editing products.'})
+    if branch and product.category.restaurant_id != branch.restaurant_id:
+        raise ValidationError({'category': 'Category belongs to a different restaurant.'})
+    if linked_id:
+        if not branch or not InventoryItem.objects.filter(pk=linked_id, branch=branch, is_active=True).exists():
+            raise ValidationError({'linked_inventory_item': 'Inventory item must belong to this outlet.'})
+        product.is_direct_inventory_item = True
+        product.requires_kitchen = False
+        nested['recipe_ingredients'] = [{'inventory_item_id': linked_id, 'quantity_required': Decimal('1')}]
+    _combo(product)
+    product.save(force_insert=creating)
+    if product.is_combo_package and 'variants' in nested:
+        for row in nested['variants']:
+            row['price'] = product.base_price
+    _sync_children(product, nested, branch)
+    for combo in Product.objects.filter(category__restaurant_id=product.category.restaurant_id, is_combo_package=True, is_archived=False).exclude(pk=product.pk):
+        if any(row['product_id'] == product.pk for row in combo.combo_items):
+            _combo(combo)
+            combo.save()
+    menu_changed(restaurant_id=product.category.restaurant_id)
+    product._prefetched_objects_cache = {}
     return product
 
 
 @transaction.atomic
-def product_update(product: Product, **kwargs) -> Product:
-    for key, value in kwargs.items():
-        if hasattr(product, key):
-            setattr(product, key, value)
-    product.save()
-    return product
+def product_create(category, name, base_price, branch=None, **data):
+    Restaurant.objects.select_for_update().get(pk=category.restaurant_id)
+    return _save_product(Product(category=category, name=name.strip(), base_price=Decimal(str(base_price))), data, branch, True)
 
 
 @transaction.atomic
-def variant_create(
-    product: Product,
-    name: str,
-    price: Decimal,
-    id: str = None,
-    is_default: bool = False,
-) -> ProductVariant:
-    variant = ProductVariant(
-        product=product,
-        name=name.strip(),
-        price=Decimal(str(price)),
-        is_default=is_default,
-    )
-    if id:
-        variant.id = id.strip()
-    variant.save()
-    return variant
+def product_update(product, branch=None, **data):
+    Restaurant.objects.select_for_update().get(pk=product.category.restaurant_id)
+    product = Product.objects.select_for_update().select_related('category').get(pk=product.pk)
+    return _save_product(product, data, branch)
 
 
 @transaction.atomic
-def modifier_group_create(
-    product: Product,
-    name: str,
-    id: str = None,
-    min_selections: int = 0,
-    max_selections: int = 1,
-    required: bool = False,
-) -> ModifierGroup:
-    group = ModifierGroup(
-        product=product,
-        name=name.strip(),
-        min_selections=min_selections,
-        max_selections=max_selections,
-        required=required,
-    )
-    if id:
-        group.id = id.strip()
-    group.save()
-    return group
+def product_archive(product):
+    Restaurant.objects.select_for_update().get(pk=product.category.restaurant_id)
+    for combo in Product.objects.filter(category__restaurant_id=product.category.restaurant_id, is_combo_package=True, is_archived=False):
+        if any(row['product_id'] == product.pk for row in combo.combo_items):
+            raise ValidationError('Remove this product from active combos before archiving it.')
+    product.is_archived = True
+    product.save(update_fields=['is_archived', 'updated_at'])
+    menu_changed(restaurant_id=product.category.restaurant_id)
 
 
 @transaction.atomic
-def modifier_option_create(
-    group: ModifierGroup,
-    name: str,
-    id: str = None,
-    price_delta: Decimal = Decimal('0.00'),
-    is_default: bool = False,
-) -> ModifierOption:
-    option = ModifierOption(
-        group=group,
-        name=name.strip(),
-        price_delta=Decimal(str(price_delta)),
-        is_default=is_default,
-    )
-    if id:
-        option.id = id.strip()
-    option.save()
-    return option
+def variant_create(product, **data):
+    obj = _upsert(ProductVariant, {'product': product}, data)
+    menu_changed(restaurant_id=product.category.restaurant_id)
+    return obj
 
 
 @transaction.atomic
-def outlet_toggle_product_availability(
-    branch,
-    product: Product,
-    is_available: bool,
-) -> OutletProductOverride:
-    """
-    Outlet Admin Action:
-    Marks a product available or sold out specifically for this branch outlet.
-    Busts Redis cache and broadcasts real-time WebSocket update to all devices.
-    """
-    override, _ = OutletProductOverride.objects.get_or_create(
-        branch=branch,
-        product=product,
-    )
-    override.is_available = is_available
-    override.save()
-
-    # Invalidate cache for this branch
-    invalidate_outlet_menu_cache(branch.id)
-
-    # Dispatch live WebSocket notification for ZERO PAGE RELOAD
-    broadcast_product_availability_change(
-        branch_id=branch.id,
-        product_id=product.id,
-        is_available=is_available,
-        product_name=product.name,
-    )
-
-    return override
+def modifier_group_create(product, **data):
+    obj = _upsert(ModifierGroup, {'product': product}, data)
+    menu_changed(restaurant_id=product.category.restaurant_id)
+    return obj
 
 
 @transaction.atomic
-def outlet_override_product_price(
-    branch,
-    product: Product,
-    price_override: Decimal = None,
-) -> OutletProductOverride:
-    """
-    Outlet Admin Action:
-    Sets a branch-specific price override (e.g. airport branch premium).
-    If price_override is None, reverts to global catalog base price.
-    """
-    override, _ = OutletProductOverride.objects.get_or_create(
-        branch=branch,
-        product=product,
-    )
-    override.price_override = Decimal(str(price_override)) if price_override is not None else None
-    override.save()
+def modifier_option_create(group, **data):
+    obj = _upsert(ModifierOption, {'group': group}, data)
+    menu_changed(restaurant_id=group.product.category.restaurant_id)
+    return obj
 
-    invalidate_outlet_menu_cache(branch.id)
-    return override
 
+@transaction.atomic
+def outlet_update_product(branch, product, **data):
+    if product.category.restaurant_id != branch.restaurant_id:
+        raise ValidationError('Product belongs to another restaurant.')
+    obj, _ = OutletProductOverride.objects.update_or_create(branch=branch, product=product, defaults=data)
+    menu_changed(branch_id=branch.pk)
+    return obj
+
+
+def outlet_toggle_product_availability(branch, product, is_available):
+    return outlet_update_product(branch, product, is_available=is_available)
+
+
+def outlet_override_product_price(branch, product, price_override=None):
+    return outlet_update_product(branch, product, price_override=price_override)
+
+
+@transaction.atomic
+def schedule_save(branch, data, instance=None):
+    obj = instance or OutletTimePricingSchedule(branch=branch)
+    for key, value in data.items():
+        setattr(obj, key, value)
+    if Product.objects.filter(pk__in=obj.product_ids, category__restaurant_id=branch.restaurant_id, is_archived=False).count() != len(set(obj.product_ids)):
+        raise ValidationError({'product_ids': 'Unknown product or product belongs to another restaurant.'})
+    obj.save()
+    menu_changed(branch_id=branch.pk)
+    return obj
+
+
+@transaction.atomic
+def schedule_delete(instance):
+    bid = instance.branch_id
+    instance.delete()
+    menu_changed(branch_id=bid)

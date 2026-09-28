@@ -160,6 +160,7 @@ class OrderItem(TimeStampedModel):
     Individual product line item inside an order.
     Maintains historical snapshot of product and variant names/prices.
     """
+    combo_components = models.JSONField(default=list, blank=True)
     order = models.ForeignKey(
         Order,
         on_delete=models.CASCADE,
@@ -254,4 +255,3 @@ class OrderStatusHistory(models.Model):
 
     def __str__(self):
         return f"{self.order.order_number}: {self.from_status} -> {self.to_status}"
-

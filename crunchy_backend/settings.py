@@ -157,6 +157,7 @@ STATICFILES_DIRS = [
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+MENU_MEDIA_BASE_URL = os.getenv('MENU_MEDIA_BASE_URL', '')
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
@@ -218,6 +219,9 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 30 * 60
+CELERY_BEAT_SCHEDULE = {
+    'publish-menu-outbox': {'task': 'apps.catalog.tasks.publish_menu_events', 'schedule': 1.0},
+}
 
 # Redis Cache Configuration
 CACHES = {

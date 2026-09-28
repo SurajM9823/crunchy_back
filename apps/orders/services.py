@@ -146,79 +146,33 @@ def order_create_or_append_tab(
             max_round = existing_active_order.items.aggregate(models.Max('round_number'))['round_number__max'] or 1
             round_number = max_round + 1
 
-    # 3. Server-Side Price Revalidation & Line Item Construction
-    # Fetch overrides for this outlet
-    product_ids = [item['product_id'] for item in raw_items]
-    overrides = {
-        ov.product_id: ov
-        for ov in OutletProductOverride.objects.filter(branch=branch, product_id__in=product_ids)
-    }
-
+    # Use exactly the same authority as public menu quotes; never accept client totals.
+    from apps.catalog.selectors import quote_items, product_queryset
+    from apps.catalog.serializers import QuoteLineSerializer
+    from rest_framework.exceptions import ValidationError as APIValidationError
+    channel = {'TABLE_QR': 'qr', 'KIOSK': 'kiosk', 'POS': 'pos', 'WEBSITE': 'web'}[order_source]
+    if fulfillment_type == FulfillmentType.DELIVERY:
+        channel = 'delivery'
+    validator = QuoteLineSerializer(data=raw_items, many=True)
+    try:
+        validator.is_valid(raise_exception=True)
+        quoted = quote_items(branch, validator.validated_data, channel)
+    except APIValidationError as exc:
+        raise ValidationError(str(exc.detail)) from exc
+    products = {p.pk: p for p in product_queryset().filter(pk__in=[r['product_id'] for r in raw_items])}
     validated_line_items = []
-    round_subtotal = Decimal('0.00')
-
-    for raw_item in raw_items:
-        product = Product.objects.filter(id=raw_item['product_id']).first()
-        if not product:
-            raise ValidationError(f"Product {raw_item['product_id']} does not exist.")
-
-        # Check outlet-specific availability
-        override = overrides.get(product.id)
-        is_available = override.is_available if override else product.is_available
-        if not is_available:
-            raise ValidationError(f"Item '{product.name}' is currently OUT OF STOCK at this outlet.")
-
-        # Variant resolution
-        variant = None
-        variant_price = None
-        if raw_item.get('variant_id'):
-            variant = ProductVariant.objects.filter(id=raw_item['variant_id'], product=product).first()
-            if not variant:
-                raise ValidationError(f"Variant {raw_item['variant_id']} not valid for {product.name}.")
-            variant_price = variant.price
-
-        # Base price or outlet price override
-        effective_base_price = (
-            override.price_override
-            if (override and override.price_override is not None)
-            else product.base_price
-        )
-
-        # Modifiers resolution
-        modifier_options = []
-        modifier_deltas = []
-        if raw_item.get('modifier_option_ids'):
-            modifier_options = list(
-                ModifierOption.objects
-                .select_related('group')
-                .filter(id__in=raw_item['modifier_option_ids'], group__product=product)
-            )
-            modifier_deltas = [opt.price_delta for opt in modifier_options]
-
-        # Calculate unit price using single source of truth engine
-        unit_price = calculate_line_item_unit_price(
-            base_price=effective_base_price,
-            variant_price=variant_price,
-            modifier_price_deltas=modifier_deltas,
-            discount_percent=product.discount_percent,
-        )
-
-        qty = int(raw_item.get('quantity', 1))
-        if qty < 1:
-            raise ValidationError("Item quantity must be at least 1.")
-
-        line_total = round_currency(unit_price * qty)
-        round_subtotal += line_total
-
+    round_subtotal = Decimal(quoted['subtotal'])
+    for raw, priced in zip(raw_items, quoted['items']):
+        product = products[priced['product_id']]
+        variant = next((v for v in product.variants.all() if v.pk == priced['variant_id']), None)
+        selected = set(raw.get('modifier_option_ids', []))
+        modifiers = [o for g in product.modifier_groups.all() for o in g.options.all() if o.pk in selected]
         validated_line_items.append({
-            'product': product,
-            'variant': variant,
-            'unit_price': unit_price,
-            'quantity': qty,
-            'line_total': line_total,
+            'product': product, 'variant': variant, 'unit_price': Decimal(priced['unit_price']),
+            'quantity': priced['quantity'], 'line_total': Decimal(priced['line_total']),
             'requires_kitchen': product.requires_kitchen,
-            'item_notes': raw_item.get('item_notes', ''),
-            'modifier_options': modifier_options,
+            'item_notes': raw.get('item_notes', ''), 'modifier_options': modifiers,
+            'combo_components': priced['combo_components'],
         })
 
     # 4. Persist or Append to Existing Order
@@ -272,6 +226,7 @@ def order_create_or_append_tab(
             requires_kitchen=item_data['requires_kitchen'],
             round_number=round_number,
             item_notes=item_data['item_notes'],
+            combo_components=item_data['combo_components'],
         )
 
         for opt in item_data['modifier_options']:

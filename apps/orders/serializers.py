@@ -26,6 +26,7 @@ class OrderItemSerializer(serializers.ModelSerializer):
             'round_number',
             'item_notes',
             'modifiers',
+            'combo_components',
         ]
 
 
@@ -77,6 +78,8 @@ class OrderDetailSerializer(serializers.ModelSerializer):
 
 
 class CheckoutItemRequestSerializer(serializers.Serializer):
+    from apps.catalog.serializers import ComboSelectionSerializer
+    combo_selections = ComboSelectionSerializer(many=True, required=False, allow_empty=False, max_length=100)
     product_id = serializers.CharField(required=True)
     variant_id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     modifier_option_ids = serializers.ListField(
@@ -106,4 +109,3 @@ class CheckoutRequestSerializer(serializers.Serializer):
 class OrderStatusTransitionSerializer(serializers.Serializer):
     to_status = serializers.CharField(required=True)
     notes = serializers.CharField(required=False, allow_blank=True, default="")
-

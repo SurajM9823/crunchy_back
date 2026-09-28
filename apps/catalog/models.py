@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.db import models
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils.text import slugify
+from django.utils import timezone
 from apps.common.models import TimeStampedModel
 
 
@@ -12,6 +13,7 @@ class Category(TimeStampedModel):
     Maps to Category in frontend (`src/types/index.ts`).
     """
     id = models.CharField(max_length=64, primary_key=True)
+    restaurant = models.ForeignKey('restaurants.Restaurant', on_delete=models.PROTECT, null=True, blank=True, related_name='menu_categories')
     name = models.CharField(max_length=120, db_index=True)
     icon_name = models.CharField(max_length=64, default="Utensils", help_text="Lucide icon identifier")
     display_order = models.PositiveIntegerField(default=0, db_index=True)
@@ -27,7 +29,7 @@ class Category(TimeStampedModel):
     def save(self, *args, **kwargs):
         if not self.id:
             slug = slugify(self.name)
-            self.id = f"cat-{slug}" if slug else f"cat-{uuid.uuid4().hex[:8]}"
+            self.id = f"cat-{slug[:35]}-{uuid.uuid4().hex[:12]}"
         super().save(*args, **kwargs)
 
     def __str__(self):
@@ -46,6 +48,7 @@ class Product(TimeStampedModel):
     )
 
     id = models.CharField(max_length=64, primary_key=True)
+    is_archived = models.BooleanField(default=False, db_index=True)
     category = models.ForeignKey(
         Category,
         on_delete=models.PROTECT,
@@ -151,11 +154,15 @@ class Product(TimeStampedModel):
         verbose_name = 'Product'
         verbose_name_plural = 'Products'
         ordering = ['category', 'name']
+        constraints = [
+            models.CheckConstraint(condition=models.Q(base_price__gte=0), name='catalog_price_nonnegative'),
+            models.CheckConstraint(condition=models.Q(discount_percent__gte=0, discount_percent__lte=100), name='catalog_discount_range'),
+        ]
 
     def save(self, *args, **kwargs):
         if not self.id:
             slug = slugify(self.name)
-            self.id = f"prod-{slug}" if slug else f"prod-{uuid.uuid4().hex[:8]}"
+            self.id = f"prod-{slug[:34]}-{uuid.uuid4().hex[:12]}"
         if self.cost_price is None and self.base_price is not None:
             # Default to ~45% COGS as per specification
             self.cost_price = (self.base_price * Decimal('0.45')).quantize(Decimal('0.01'))
@@ -191,11 +198,12 @@ class ProductVariant(TimeStampedModel):
         verbose_name = 'Product Variant'
         verbose_name_plural = 'Product Variants'
         ordering = ['price']
+        constraints = [models.CheckConstraint(condition=models.Q(price__gte=0), name='variant_price_nonnegative')]
 
     def save(self, *args, **kwargs):
         if not self.id:
             slug = slugify(self.name)
-            self.id = f"var-{slug}-{uuid.uuid4().hex[:4]}"
+            self.id = f"var-{slug[:34]}-{uuid.uuid4().hex[:12]}"
         super().save(*args, **kwargs)
 
     def __str__(self):
@@ -228,11 +236,12 @@ class ModifierGroup(TimeStampedModel):
         db_table = 'catalog_modifier_group'
         verbose_name = 'Modifier Group'
         verbose_name_plural = 'Modifier Groups'
+        constraints = [models.CheckConstraint(condition=models.Q(max_selections__gte=models.F('min_selections')) & models.Q(max_selections__gte=1), name='modifier_selection_limits')]
 
     def save(self, *args, **kwargs):
         if not self.id:
             slug = slugify(self.name)
-            self.id = f"sec-{slug}-{uuid.uuid4().hex[:4]}"
+            self.id = f"sec-{slug[:34]}-{uuid.uuid4().hex[:12]}"
         if self.required and self.min_selections < 1:
             self.min_selections = 1
         super().save(*args, **kwargs)
@@ -266,11 +275,12 @@ class ModifierOption(TimeStampedModel):
         verbose_name = 'Modifier Option'
         verbose_name_plural = 'Modifier Options'
         ordering = ['price_delta', 'name']
+        constraints = [models.CheckConstraint(condition=models.Q(price_delta__gte=0), name='modifier_price_nonnegative')]
 
     def save(self, *args, **kwargs):
         if not self.id:
             slug = slugify(self.name)
-            self.id = f"opt-{slug}-{uuid.uuid4().hex[:4]}"
+            self.id = f"opt-{slug[:34]}-{uuid.uuid4().hex[:12]}"
         super().save(*args, **kwargs)
 
     def __str__(self):
@@ -299,6 +309,7 @@ class ProductTimePricing(TimeStampedModel):
         db_table = 'catalog_product_time_pricing'
         verbose_name = 'Product Time Pricing'
         verbose_name_plural = 'Product Time Pricings'
+        constraints = [models.CheckConstraint(condition=models.Q(price__gte=0), name='slot_price_nonnegative')]
 
 
 class OutletProductOverride(TimeStampedModel):
@@ -340,6 +351,7 @@ class OutletProductOverride(TimeStampedModel):
         verbose_name = 'Outlet Product Override'
         verbose_name_plural = 'Outlet Product Overrides'
         unique_together = ('branch', 'product')
+        constraints = [models.CheckConstraint(condition=models.Q(price_override__gte=0) | models.Q(price_override__isnull=True), name='outlet_price_nonnegative')]
 
     def __str__(self):
         status_str = "Available" if self.is_available else "OUT OF STOCK"
@@ -357,6 +369,9 @@ class OutletTimePricingSchedule(TimeStampedModel):
         db_index=True,
     )
     name = models.CharField(max_length=120)
+    adjustment_percentage = models.DecimalField(max_digits=7, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(Decimal('-100'))])
+    channels = models.JSONField(default=list, blank=True)
+    priority = models.PositiveIntegerField(default=0)
     start_time = models.TimeField()
     end_time = models.TimeField()
     days = models.JSONField(default=list, help_text="List of days: ['Mon', 'Tue', ...]")
@@ -372,7 +387,30 @@ class OutletTimePricingSchedule(TimeStampedModel):
         db_table = 'outlet_time_pricing_schedule'
         verbose_name = 'Outlet Time Pricing Schedule'
         verbose_name_plural = 'Outlet Time Pricing Schedules'
+        constraints = [
+            models.CheckConstraint(condition=models.Q(adjustment_percentage__gte=-100) | models.Q(adjustment_percentage__isnull=True), name='schedule_adjustment_minimum'),
+            models.CheckConstraint(condition=models.Q(discount_percentage__gte=0, discount_percentage__lte=100), name='schedule_discount_range'),
+            models.CheckConstraint(condition=~models.Q(start_time=models.F('end_time')), name='schedule_distinct_times'),
+        ]
 
     def __str__(self):
         return f"{self.branch.name}: {self.name} ({self.discount_percentage}%)"
 
+
+class MenuRevision(models.Model):
+    branch = models.OneToOneField('restaurants.Branch', on_delete=models.CASCADE, primary_key=True)
+    revision = models.PositiveBigIntegerField(default=1)
+
+
+class MenuOutboxEvent(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    branch = models.ForeignKey('restaurants.Branch', on_delete=models.CASCADE)
+    revision = models.PositiveBigIntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+    attempts = models.PositiveIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(default=timezone.now)
+    last_error = models.TextField(blank=True, default='')
+
+    class Meta:
+        indexes = [models.Index(fields=['published_at', 'next_attempt_at'], name='menu_outbox_pending_idx')]

@@ -597,6 +597,19 @@ def recipe_item_create(
     return recipe_item
 
 
+def _order_inventory_lines(order):
+    from types import SimpleNamespace
+    for row in order.items.select_related('product', 'variant').all():
+        if not row.combo_components:
+            yield row
+            continue
+        for component in row.combo_components:
+            product = Product.objects.get(pk=component['product_id'])
+            variant = ProductVariant.objects.filter(pk=component.get('variant_id'), product=product).first()
+            yield SimpleNamespace(product=product, variant=variant,
+                                  quantity=row.quantity * component['quantity'])
+
+
 @transaction.atomic
 def deduct_inventory_for_order(order: Order) -> list:
     """
@@ -610,7 +623,7 @@ def deduct_inventory_for_order(order: Order) -> list:
     deductions = []
     branch = order.branch
 
-    for order_item in order.items.select_related('product', 'variant').all():
+    for order_item in _order_inventory_lines(order):
         product = order_item.product
         variant = order_item.variant
         order_qty = Decimal(str(order_item.quantity))
@@ -688,7 +701,6 @@ def deduct_inventory_for_order(order: Order) -> list:
                     product=product,
                     defaults={'is_available': False},
                 )
-                invalidate_outlet_menu_cache(branch.id)
                 broadcast_product_availability_change(
                     branch_id=branch.id,
                     product_id=product.id,
