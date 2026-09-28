@@ -46,6 +46,8 @@ def order_settle_payment(
     - Records immutable audit log.
     - Pushes live WebSocket update to POS cashier and customer.
     """
+    if order.is_pos_managed:
+        raise ValidationError('Use the authenticated POS settlement endpoint for this order.')
     # 1. Idempotency Check
     if idempotency_key:
         existing_txn = PaymentTransaction.objects.filter(idempotency_key=idempotency_key).first()
@@ -142,4 +144,3 @@ def order_settle_payment(
         async_to_sync(channel_layer.group_send)(f"order_{order.id}", payload)
 
     return txn, invoice
-

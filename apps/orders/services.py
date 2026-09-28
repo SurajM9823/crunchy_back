@@ -130,11 +130,14 @@ def order_create_or_append_tab(
     table_session_id = None
 
     if fulfillment_type == FulfillmentType.DINE_IN and table:
+        if Order.objects.filter(branch=branch,table=table,is_pos_managed=True,status__in=[OrderStatus.PENDING,OrderStatus.ACCEPTED,OrderStatus.PREPARING,OrderStatus.READY]).exists():
+            raise ValidationError('This table is managed by staff POS. Ask staff to add a round.')
         table_session_id = table_open_dining_session(table)
         existing_active_order = (
             Order.objects
             .filter(
                 branch=branch,
+                is_pos_managed=False,
                 table=table,
                 table_session_id=table_session_id,
                 payment_status=PaymentStatus.UNPAID,
@@ -272,6 +275,8 @@ def order_transition_status(
     Transitions order to new status, records immutable audit history,
     closes table session upon completion, and broadcasts live WebSocket event.
     """
+    if order.is_pos_managed:
+        raise ValidationError('Use the authenticated POS command endpoint for this order.')
     if changed_by is None and user is not None:
         changed_by = user
     valid_transitions = {
@@ -292,7 +297,6 @@ def order_transition_status(
     order.status = to_status
 
     if to_status == OrderStatus.COMPLETED:
-        order.payment_status = PaymentStatus.PAID
         # Free table session if dine-in
         if order.table:
             table_close_dining_session(order.table)

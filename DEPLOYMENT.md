@@ -303,7 +303,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 python manage.py migrate
 python manage.py collectstatic --noinput
-sudo systemctl restart daphne celery celerybeat
+    sudo systemctl restart daphne celery celerybeat
 echo "Crunchy Bag Backend Updated Successfully!"
 ```
 

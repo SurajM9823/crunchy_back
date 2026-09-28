@@ -58,11 +58,27 @@ def get_outlet_product_override(branch_id, product_id):
     return OutletProductOverride.objects.filter(branch_id=branch_id, product_id=product_id).first()
 
 
-def catalog_context(branch):
-    products = {p.pk: p for p in list_products(active_only=False, restaurant_id=branch.restaurant_id)}
-    overrides = {o.product_id: o for o in OutletProductOverride.objects.filter(branch=branch)}
+def catalog_context(branch, product_ids=None):
+    queryset = list_products(active_only=False, restaurant_id=branch.restaurant_id)
+    if product_ids is not None:
+        queryset = queryset.filter(pk__in=product_ids)
+    products = {p.pk: p for p in queryset}
+    if product_ids is not None:
+        component_ids = {r['product_id'] for p in products.values() for r in p.combo_items} - products.keys()
+        products.update({p.pk:p for p in list_products(active_only=False, restaurant_id=branch.restaurant_id).filter(pk__in=component_ids)})
+    overrides_query = OutletProductOverride.objects.filter(branch=branch)
+    if product_ids is not None:
+        overrides_query = overrides_query.filter(product_id__in=products)
+    overrides = {o.product_id: o for o in overrides_query}
     schedules = list(OutletTimePricingSchedule.objects.filter(branch=branch))
     return products, overrides, schedules
+
+
+def stock_available(product, branch, quantity=1):
+    # Recipe rows are prefetched. Only this outlet's base recipe constrains its menu.
+    return all(r.inventory_item.current_stock >= r.quantity_required * quantity
+               for r in product.recipe_items.all()
+               if r.inventory_item.branch_id == branch.pk and r.variant_id is None)
 
 
 def _compile_menu(branch, channel, revision, now):
@@ -77,7 +93,7 @@ def _compile_menu(branch, channel, revision, now):
         for key in ('cost_price', 'recipe_ingredients', 'linked_inventory_item'):
             row.pop(key, None)
         row['category_id'] = product.category_id
-        row['is_available'] = available(product, override)
+        row['is_available'] = available(product, override) and stock_available(product, branch)
         combo_price = None
         if product.is_combo_package:
             try:
@@ -86,7 +102,7 @@ def _compile_menu(branch, channel, revision, now):
                     combo_price = override.price_override
                 row['combo_original_price'] = str(original)
                 row['is_available'] = row['is_available'] and all(
-                    available(products[r['product_id']], overrides.get(r['product_id'])) for r in product.combo_items)
+                    available(products[r['product_id']], overrides.get(r['product_id'])) and stock_available(products[r['product_id']], branch, r['quantity']) for r in product.combo_items)
             except ValidationError:
                 row['is_available'] = False
                 combo_price = product.base_price
@@ -151,7 +167,9 @@ def management_snapshot(branch):
 def quote_items(branch, items, channel, now=None):
     from decimal import Decimal
     now = now or timezone.now()
-    products, overrides, schedules = catalog_context(branch)
+    selected_ids = {r['product_id'] for r in items}
+    selected_ids.update(c['product_id'] for r in items for c in r.get('combo_selections', []))
+    products, overrides, schedules = catalog_context(branch, selected_ids)
     result = []
     for raw in items:
         product = products.get(raw['product_id'])

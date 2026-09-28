@@ -228,7 +228,8 @@ class CentralizedOrderEngineTests(TestCase):
         order_transition_status(order, OrderStatus.COMPLETED, user=self.manager)
         order.refresh_from_db()
         self.assertEqual(order.status, OrderStatus.COMPLETED)
-        self.assertEqual(order.payment_status, PaymentStatus.PAID)
+        # Fulfillment does not prove that a cashier collected payment.
+        self.assertEqual(order.payment_status, PaymentStatus.UNPAID)
 
         # Verify Table Session closed
         self.table.refresh_from_db()
@@ -255,4 +256,3 @@ class CentralizedOrderEngineTests(TestCase):
         self.assertEqual(res.data['table_number'], "T-05")
         self.assertEqual(res.data['total_payable'], "500.00")
         self.assertEqual(res.data['status'], OrderStatus.PENDING)
-

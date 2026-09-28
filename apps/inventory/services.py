@@ -620,6 +620,9 @@ def deduct_inventory_for_order(order: Order) -> list:
     4. Auto-out-of-stock trigger: If ingredient hits 0, marks product out of stock
        and broadcasts live WebSocket event with Zero Page Reload!
     """
+    if order.is_pos_managed:
+        # Staff POS consumes each round transactionally; legacy callbacks must not deduct it again.
+        return []
     deductions = []
     branch = order.branch
 

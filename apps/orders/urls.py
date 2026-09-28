@@ -1,4 +1,5 @@
 from django.urls import path
+from .pos_views import PosOrdersView, PosQuoteView, PosMetaView, PosDetailView, PosCommandView, PosReceiptView, PosSocketTicketView, PosBillQuoteView
 from .views import (
     CheckoutAPIView,
     OrderDetailAPIView,
@@ -9,6 +10,14 @@ from .views import (
 )
 
 urlpatterns = [
+    path('pos/', PosOrdersView.as_view()),
+    path('pos/quote/', PosQuoteView.as_view()),
+    path('pos/meta/', PosMetaView.as_view()),
+    path('pos/socket-ticket/', PosSocketTicketView.as_view()),
+    path('pos/receipts/<int:receipt_id>/', PosReceiptView.as_view()),
+    path('pos/<int:order_id>/', PosDetailView.as_view()),
+    path('pos/<int:order_id>/billing-quote/', PosBillQuoteView.as_view()),
+    *[path(f'pos/<int:order_id>/{action}/', PosCommandView.as_view(), {'action':action}) for action in ['append','settle','transition','void','refund','call','bill']],
     # Universal Checkout API (Table QR, POS, Kiosk, Customer App)
     path('checkout/', CheckoutAPIView.as_view(), name='order-checkout'),
 

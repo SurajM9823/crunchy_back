@@ -33,6 +33,8 @@ class PaymentSettleAPIView(APIView):
             return Response({"detail": "Order not found."}, status=status.HTTP_404_NOT_FOUND)
 
         received_by = request.user if request.user.is_authenticated else None
+        from apps.orders.pos_access import require_access
+        require_access(request.user, order.branch, 'billing')
 
         try:
             txn, invoice = order_settle_payment(
@@ -110,6 +112,8 @@ class PaymentWebhookAPIView(APIView):
         if not order:
             return Response({"detail": "Order not found."}, status=status.HTTP_404_NOT_FOUND)
 
+        if order.is_pos_managed:
+            return Response({'detail':'Staff POS payments require authenticated settlement.'},status=403)
         idempotency_key = f"{gateway}:{gateway_ref}" if gateway_ref else None
 
         txn, invoice = order_settle_payment(

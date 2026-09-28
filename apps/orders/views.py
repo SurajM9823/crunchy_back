@@ -37,6 +37,8 @@ class CheckoutAPIView(APIView):
         serializer = CheckoutRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        if data.get('order_source') == 'POS':
+            return Response({'detail':'Staff POS orders must use the authenticated /orders/pos/ endpoint.'},status=403)
 
         branch = None
         table = None
@@ -116,6 +118,9 @@ class OrderDetailAPIView(APIView):
         if not order:
             return Response({"detail": "Order not found."}, status=status.HTTP_404_NOT_FOUND)
 
+        if order.is_pos_managed:
+            from .pos_access import require_access
+            require_access(request.user, order.branch, 'read')
         return Response(OrderDetailSerializer(order).data, status=status.HTTP_200_OK)
 
 
@@ -183,6 +188,8 @@ class OrderStatusTransitionAPIView(APIView):
             return Response({"detail": "Order not found."}, status=status.HTTP_404_NOT_FOUND)
 
         serializer = OrderStatusTransitionSerializer(data=request.data)
+        from .pos_access import require_access
+        require_access(request.user, order.branch, 'kitchen')
         serializer.is_valid(raise_exception=True)
 
         try:
@@ -207,4 +214,3 @@ class LiveDisplayAPIView(APIView):
     def get(self, request, outlet_id):
         tickets = get_live_tv_pickup_tickets(outlet_id)
         return Response(tickets, status=status.HTTP_200_OK)
-
