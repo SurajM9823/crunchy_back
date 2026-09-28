@@ -3,6 +3,15 @@ from django.db import models
 from apps.common.models import TimeStampedModel
 
 
+class TableGroup(TimeStampedModel):
+    branch = models.ForeignKey('restaurants.Branch', on_delete=models.CASCADE, related_name='table_groups')
+    name = models.CharField(max_length=64)
+
+    class Meta:
+        ordering = ['name', 'pk']
+        constraints = [models.UniqueConstraint(fields=['branch', 'name'], name='table_group_branch_name')]
+
+
 class DiningTable(TimeStampedModel):
     """
     Physical restaurant dining table linked to a specific franchise outlet.
@@ -56,4 +65,3 @@ class DiningTable(TimeStampedModel):
 
     def __str__(self):
         return f"{self.branch.name} - Table {self.table_number}"
-

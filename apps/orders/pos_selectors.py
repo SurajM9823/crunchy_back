@@ -19,7 +19,8 @@ def order_data(order, detail=True):
     settlement = 'REFUNDED' if order.refunded_amount else 'PAID' if due == 0 else 'CREDIT' if order.credit_amount else 'PARTIAL' if order.paid_amount else 'UNPAID'
     data = {key: getattr(order, key) for key in ['id', 'order_number', 'version', 'status', 'customer_name', 'customer_phone', 'fulfillment_type', 'order_source', 'payment_method', 'notes', 'delivery_address']}
     data.update({key: str(getattr(order, key)) for key in ['subtotal', 'total_payable', 'discount_amount', 'service_charge_amount', 'vat_included_amount', 'cash_round_down_savings', 'paid_amount', 'credit_amount', 'refunded_amount']})
-    data.update(created_at=order.created_at.isoformat(), updated_at=order.updated_at.isoformat(), settlement=settlement,
+    data.update(outlet_id=order.branch_id, billed_at=order.billed_at.isoformat() if order.billed_at else None,
+                created_at=order.created_at.isoformat(), updated_at=order.updated_at.isoformat(), settlement=settlement,
                 due_amount=str(due), unallocated_due=str(max(Decimal('0'), due-order.credit_amount)), table_id=order.table_id,
                 table_number=order.table.table_number if order.table_id else None, discount_reason=order.discount_reason)
     data['items'] = [{'id': r.pk, 'product_id': r.product_id, 'product_name': r.product_name, 'variant_id': r.variant_id,
@@ -51,12 +52,13 @@ def list_orders(branch, filters):
         qs = qs.filter(fulfillment_type=filters['fulfillment'])
     if filters.get('search'):
         s = filters['search']
-        qs = qs.filter(Q(order_number__icontains=s) | Q(customer_name__icontains=s) | Q(customer_phone__icontains=s) | Q(items__product_name__icontains=s)).distinct()
+        qs = qs.filter(Q(order_number__icontains=s) | Q(customer_name__icontains=s) | Q(customer_phone__icontains=s) | Q(table__table_number__icontains=s) | Q(items__product_name__icontains=s)).distinct()
     settlement = filters.get('settlement', 'ALL')
     if settlement == 'PAID': qs = qs.filter(paid_amount__gte=F('total_payable'), refunded_amount=0)
     if settlement == 'UNPAID': qs = qs.filter(paid_amount=0, credit_amount=0, total_payable__gt=0).exclude(status='CANCELLED')
     if settlement == 'PARTIAL': qs = qs.filter(paid_amount__gt=0, paid_amount__lt=F('total_payable'), credit_amount=0).exclude(status='CANCELLED')
     if settlement == 'CREDIT': qs = qs.filter(credit_amount__gt=0)
+    if settlement == 'REFUNDED': qs = qs.filter(refunded_amount__gt=0)
     counts = {r['status']: r['n'] for r in qs.order_by().values('status').annotate(n=Count('id', distinct=True))}
     if filters.get('status', 'ALL') != 'ALL': qs = qs.filter(status=filters['status'])
     # Aggregate over a deduplicated ID subquery, never fan out across item/payment joins.

@@ -1,5 +1,5 @@
 from django.urls import path
-from .pos_views import PosOrdersView, PosQuoteView, PosMetaView, PosDetailView, PosCommandView, PosReceiptView, PosSocketTicketView, PosBillQuoteView
+from .pos_views import PosOrdersView, PosQuoteView, PosMetaView, PosDetailView, PosCommandView, PosReceiptView, PosSocketTicketView, PosBillQuoteView, PosLayoutView
 from .views import (
     CheckoutAPIView,
     OrderDetailAPIView,
@@ -13,6 +13,10 @@ urlpatterns = [
     path('pos/', PosOrdersView.as_view()),
     path('pos/quote/', PosQuoteView.as_view()),
     path('pos/meta/', PosMetaView.as_view()),
+    path('pos/table-groups/', PosLayoutView.as_view(), {'kind': 'group'}),
+    path('pos/table-groups/<int:object_id>/', PosLayoutView.as_view(), {'kind': 'group'}),
+    path('pos/tables/', PosLayoutView.as_view(), {'kind': 'table'}),
+    path('pos/tables/<int:object_id>/', PosLayoutView.as_view(), {'kind': 'table'}),
     path('pos/socket-ticket/', PosSocketTicketView.as_view()),
     path('pos/receipts/<int:receipt_id>/', PosReceiptView.as_view()),
     path('pos/<int:order_id>/', PosDetailView.as_view()),

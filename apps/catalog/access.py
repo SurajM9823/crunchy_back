@@ -12,6 +12,7 @@ def resolve_branch(request, *, manage=False, operational=False):
         raise ValidationError({'outlet_id': 'An explicit numeric outlet_id is required.'})
     branch = Branch.objects.select_related('restaurant').filter(pk=raw, is_active=True).first()
     if not branch:
+        print('branch is not found, please enter the branch and try again')
         raise NotFound('Outlet not found.')
     if operational and not manage:
         if not user.is_authenticated or not user.is_active:

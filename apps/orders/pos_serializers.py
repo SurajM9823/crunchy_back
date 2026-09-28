@@ -67,7 +67,7 @@ class PosListSerializer(serializers.Serializer):
     end_date = serializers.DateField(required=False)
     status = serializers.ChoiceField(choices=['ALL'] + list(OrderStatus.values), default='ALL')
     fulfillment = serializers.ChoiceField(choices=['ALL'] + list(FulfillmentType.values), default='ALL')
-    settlement = serializers.ChoiceField(choices=['ALL','PAID','UNPAID','PARTIAL','CREDIT'], default='ALL')
+    settlement = serializers.ChoiceField(choices=['ALL','PAID','UNPAID','PARTIAL','CREDIT','REFUNDED'], default='ALL')
     search = serializers.CharField(max_length=100, allow_blank=True, default='')
     page = serializers.IntegerField(min_value=1, max_value=100000, default=1)
     page_size = serializers.ChoiceField(choices=[10,25,50,100], default=25)

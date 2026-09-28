@@ -1,5 +1,5 @@
 """Pure price resolution shared by menu snapshots, quotes and checkout."""
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 from django.utils import timezone
@@ -8,6 +8,29 @@ from .pricing_engine import round_currency, calculate_dynamic_combo_price
 
 NPT = ZoneInfo('Asia/Kathmandu')
 DAYS = ('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun')
+
+
+def next_price_change(products, schedules, channel, now):
+    """Next actual pricing boundary; static menus require no timed REST refresh."""
+    windows = [(s.start_time, s.end_time, s.days) for s in schedules
+               if s.is_active and (not s.channels or channel in s.channels)]
+    for product in products:
+        for slot in product.time_pricings.all():
+            if slot.is_active:
+                days = DAYS if slot.days == 'All Days' else DAYS[:5] if slot.days == 'Mon-Fri' else [d.strip() for d in slot.days.split(',')]
+                windows.append((slot.start_time, slot.end_time, days))
+    local = now.astimezone(NPT)
+    boundaries = []
+    for offset in range(-1, 8):
+        day = local.date() + timedelta(days=offset)
+        for start, end, days in windows:
+            if DAYS[day.weekday()] not in days:
+                continue
+            for boundary in (datetime.combine(day, start, NPT),
+                             datetime.combine(day + timedelta(days=int(end <= start)), end, NPT)):
+                if boundary > local:
+                    boundaries.append(boundary.timestamp())
+    return min(boundaries) if boundaries else None
 
 
 def active_window(start, end, days, now):

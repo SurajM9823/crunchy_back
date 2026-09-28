@@ -9,7 +9,7 @@ from apps.restaurants.models import Branch
 from apps.inventory.models import RecipeItem
 from .models import Category, Product, ModifierGroup, OutletProductOverride, OutletTimePricingSchedule, MenuRevision
 from .serializers import ProductDetailSerializer, CategorySerializer, ScheduleSerializer
-from .pricing import available, visible, item_price, combo_baseline, resolve_choices, base_price
+from .pricing import available, visible, item_price, combo_baseline, resolve_choices, base_price, next_price_change
 
 logger = logging.getLogger(__name__)
 MENU_CACHE_TTL = 120
@@ -118,7 +118,7 @@ def _compile_menu(branch, channel, revision, now):
                 row[attr] = value
         cats[product.category_id]['products'].append(row)
     return {'branch_id': branch.pk, 'channel': channel, 'revision': revision,
-            'valid_until': (int(now.timestamp()) // 60 + 1) * 60,
+            'valid_until': next_price_change(products.values(), schedules, channel, now),
             'categories': [c for c in cats.values() if c['products']]}
 
 

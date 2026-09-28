@@ -4,7 +4,7 @@ from django.db.models import OuterRef, Subquery
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from apps.tables.models import DiningTable
+from apps.tables.models import DiningTable, TableGroup
 from .pos_access import staff_branch, can_access, require_access
 from .pos_selectors import list_orders, order_queryset, order_data
 from .pos_services import quote, mutate, totals
@@ -56,11 +56,23 @@ class PosMetaView(StaffAPIView):
         branch=staff_branch(request)
         active_orders=Order.objects.filter(branch=branch,table_id=OuterRef('pk'),status__in=['PENDING','ACCEPTED','PREPARING','READY','OUT_FOR_DELIVERY']).order_by('-created_at')
         return Response({'outlet_id':branch.pk,'outlet_name':branch.name,
+            'table_groups':list(TableGroup.objects.filter(branch=branch).values('id','name')),
+            'inactive_tables':list(DiningTable.objects.filter(branch=branch,is_active=False).values('id','table_number','capacity','section','is_active')),
             'tables':list(DiningTable.objects.filter(branch=branch,is_active=True).annotate(active_order_id=Subquery(active_orders.values('pk')[:1])).order_by('section','table_number').values('id','table_number','capacity','section','active_order_id')),
             'permissions':{c:can_access(request.user,branch,c) for c in ['orders','billing','kitchen','discount','refund']},
             'fulfillment_modes':[name for name,field in [('DINE_IN','enable_dine_in'),('TAKEAWAY','enable_takeaway'),('DELIVERY','enable_delivery'),('DRIVE_THRU','enable_drive_thru')] if getattr(branch,field)],
             'payment_methods':[name for name,field in [('CASH','enable_cash'),('CARD','enable_card'),('FONEPAY','enable_fonepay'),('ESEWA','enable_esewa'),('KHALTI','enable_khalti')] if getattr(branch.restaurant,field)]+['BANK_TRANSFER','CREDIT'],
             'accepting_orders':branch.accepting_orders and branch.enable_pos})
+
+
+class PosLayoutView(StaffAPIView):
+    def post(self, request, kind, object_id=None):
+        from apps.tables.pos_layout import GroupInput, TableInput, save_layout
+        branch = staff_branch(request, 'orders')
+        serializer = (GroupInput if kind == 'group' else TableInput)(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return Response(save_layout(branch, request.user, request.headers.get('Idempotency-Key'),
+                                    kind, serializer.validated_data, object_id))
 
 
 class PosDetailView(StaffAPIView):
