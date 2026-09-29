@@ -145,3 +145,80 @@ class CustomerFlowTests(TestCase):
         meta=self.client.get(f'/api/v1/customer/checkout/meta/?outlet_id={self.branch.pk}')
         self.assertEqual(meta.data['qr_url'],result.data['payment_qr'])
 
+    def cart_item(self, line_id='guest-line'):
+        return {'cartItemId': line_id, 'productId': str(self.product.pk), 'productName': 'Burger',
+                'image': '', 'variant': {'id': '', 'name': 'Standard', 'price': 200},
+                'selectedModifiers': [], 'quantity': 1, 'unitPrice': 200, 'lineTotal': 200,
+                'addedAt': 1, 'quoteExpiresAt': 2}
+
+    def test_cart_merge_retries_conflicts_and_account_isolation(self):
+        import uuid
+        path = f'/api/v1/customer/cart/?outlet_id={self.branch.pk}'
+        self.assertEqual(self.client.get(path).status_code, 401)
+        self.client.force_authenticate(self.customer)
+        saved = self.client.put(path, {'items': [self.cart_item('account-line')], 'version': 0}, format='json')
+        self.assertEqual(saved.status_code, 200, saved.data)
+        merge = {'items': [self.cart_item()], 'merge_id': str(uuid.uuid4())}
+        first = self.client.post(path, merge, format='json')
+        self.assertEqual(first.status_code, 200, first.data)
+        again = self.client.post(path, merge, format='json')
+        self.assertEqual(first.data, again.data)
+        self.assertEqual(len(first.data['items']), 2)
+        self.assertEqual(self.client.put(path, {'items': [], 'version': 0}, format='json').status_code, 409)
+        cleared = self.client.put(path, {'items': [], 'version': first.data['version']}, format='json')
+        self.assertEqual(cleared.status_code, 200)
+        self.assertEqual(self.client.post(path, merge, format='json').data['items'], [])
+        self.client.force_authenticate(self.other)
+        self.assertEqual(self.client.get(path).data, {'items': [], 'version': 0})
+        self.client.force_authenticate(self.owner)
+        self.assertEqual(self.client.get(path).status_code, 403)
+
+    def test_cart_rejects_other_restaurant_products_and_invalid_quantities(self):
+        self.client.force_authenticate(self.customer)
+        brand = Restaurant.objects.create(name='Other brand', slug='other-cart-brand', admin=self.owner)
+        category = Category.objects.create(name='Other', restaurant=brand)
+        product = Product.objects.create(name='Other food', category=category, base_price=100)
+        path = f'/api/v1/customer/cart/?outlet_id={self.branch.pk}'
+        item = {**self.cart_item(), 'productId': str(product.pk)}
+        self.assertEqual(self.client.put(path, {'items': [item], 'version': 0}, format='json').status_code, 400)
+        item = {**self.cart_item(), 'quantity': -1}
+        self.assertEqual(self.client.put(path, {'items': [item], 'version': 0}, format='json').status_code, 400)
+
+    def test_addresses_are_private_and_have_one_default(self):
+        self.client.force_authenticate(self.customer)
+        home = self.post('addresses/', {'label': 'Home', 'address': 'My real street', 'latitude': '27.7000000', 'longitude': '85.3000000'})
+        self.assertEqual(home.status_code, 201, home.data)
+        self.assertTrue(home.data['is_default'])
+        repeated = self.post('addresses/', {'label': 'Home', 'address': 'My real street', 'latitude': '27.7000000', 'longitude': '85.3000000'})
+        self.assertEqual(repeated.data['id'], home.data['id'])
+        work = self.post('addresses/', {'label': 'Work', 'address': 'Office street', 'is_default': True})
+        self.assertEqual(work.status_code, 201)
+        rows = self.client.get('/api/v1/customer/addresses/').data
+        self.assertEqual(sum(row['is_default'] for row in rows), 1)
+        self.assertEqual(rows[0]['label'], 'Work')
+        self.assertEqual(self.post('addresses/', {'label': 'Bad', 'address': 'Street', 'latitude': 100, 'longitude': 0}).status_code, 400)
+        self.client.force_authenticate(self.other)
+        path = f'/api/v1/customer/addresses/{home.data["id"]}/'
+        self.assertEqual(self.client.patch(path, {'address': 'stolen'}, format='json').status_code, 404)
+        self.assertEqual(self.client.delete(path).status_code, 404)
+        self.assertEqual(self.client.get('/api/v1/customer/addresses/').data, [])
+        self.client.force_authenticate(self.customer)
+        self.client.delete(f'/api/v1/customer/addresses/{work.data["id"]}/')
+        self.assertTrue(self.client.get('/api/v1/customer/addresses/').data[0]['is_default'])
+
+    def test_checkout_keeps_exact_coordinates_and_consumes_cart_once(self):
+        self.client.force_authenticate(self.customer)
+        path = f'/api/v1/customer/cart/?outlet_id={self.branch.pk}'
+        self.client.put(path, {'items': [self.cart_item()], 'version': 0}, format='json')
+        point = {'lat': 27.701234, 'lng': 85.309876, 'landmark': 'Blue gate'}
+        data = self.payload(fulfillment_type='DELIVERY', delivery_address='Real street', delivery_location=point, cart_line_ids=['guest-line'])
+        first = self.checkout(data)
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(first.data['delivery_location'], point)
+        self.assertIn('27.701234,85.309876', first.data['delivery_address'])
+        self.assertEqual(self.client.get(path).data['items'], [])
+        version = self.client.get(path).data['version']
+        self.client.put(path, {'items': [self.cart_item()], 'version': version}, format='json')
+        self.assertEqual(self.checkout(data).data['id'], first.data['id'])
+        self.assertEqual(len(self.client.get(path).data['items']), 1)
+

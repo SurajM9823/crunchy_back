@@ -89,6 +89,7 @@ class RestaurantAdmin(admin.ModelAdmin):
                     'enable_cash',
                     'enable_card',
                     'enable_fonepay',
+                    'payment_qr',
                     'enable_esewa',
                     'enable_khalti',
                 ),

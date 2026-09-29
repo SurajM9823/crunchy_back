@@ -21,6 +21,8 @@ from apps.orders.pos_serializers import PosLineSerializer
 from apps.orders.pos_services import totals, pricing_policy, add_lines, audit, receipt, Conflict, restore_stock
 from apps.restaurants.models import Branch
 from .models import CustomerProfile, CustomerOrder
+from . import selectors, services
+from .serializers import AddressSerializer, CartInput
 
 
 class CustomerView(APIView):
@@ -70,8 +72,49 @@ class FavoriteView(CustomerView):
         return Response({'favorites': list(profile.favorites.values_list('pk', flat=True))})
 
 
+class AddressView(CustomerView):
+    def get(self, request):
+        return Response(AddressSerializer(selectors.addresses(request.user), many=True).data)
+
+    def post(self, request):
+        serializer = AddressSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return Response(AddressSerializer(services.save_address(request.user, serializer.validated_data)).data, status=201)
+
+
+class AddressDetailView(CustomerView):
+    def get(self, request, address_id):
+        return Response(AddressSerializer(get_object_or_404(selectors.addresses(request.user), pk=address_id)).data)
+
+    def patch(self, request, address_id):
+        address = get_object_or_404(selectors.addresses(request.user), pk=address_id)
+        serializer = AddressSerializer(address, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        return Response(AddressSerializer(services.save_address(request.user, serializer.validated_data, address_id)).data)
+
+    def delete(self, request, address_id):
+        services.delete_address(request.user, address_id)
+        return Response(status=204)
+
+
+class CartView(CustomerView):
+    def get(self, request):
+        return Response(selectors.get_cart(request.user, branch_for(request)))
+
+    def put(self, request):
+        serializer = CartInput(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return Response(services.save_cart(request.user, branch_for(request), serializer.validated_data))
+
+    def post(self, request):
+        serializer = CartInput(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return Response(services.save_cart(request.user, branch_for(request), serializer.validated_data, merge=True))
+
+
 def branch_for(request, data=None):
-    return get_object_or_404(Branch.objects.select_related('restaurant'), pk=(data or request.query_params).get('outlet_id'), is_active=True)
+    outlet_id = serializers.IntegerField(min_value=1).run_validation((data or request.query_params).get('outlet_id'))
+    return get_object_or_404(Branch.objects.select_related('restaurant'), pk=outlet_id, is_active=True, restaurant__is_active=True)
 
 
 class CheckoutMetaView(APIView):
@@ -89,13 +132,34 @@ class CheckoutMetaView(APIView):
 class CheckoutInput(serializers.Serializer):
     outlet_id = serializers.IntegerField(min_value=1)
     items = PosLineSerializer(many=True, allow_empty=False, max_length=100)
+    cart_line_ids = serializers.ListField(child=serializers.CharField(max_length=120), max_length=100, required=False, default=list)
     fulfillment_type = serializers.ChoiceField(choices=['DELIVERY','TAKEAWAY','DRIVE_THRU','DINE_IN'])
     customer_name = serializers.CharField(max_length=120)
     delivery_address = serializers.CharField(max_length=1000, allow_blank=True, default='')
+    delivery_location = serializers.DictField(required=False, default=dict)
     table_id = serializers.IntegerField(min_value=1, allow_null=True, required=False)
     notes = serializers.CharField(max_length=2000, allow_blank=True, default='')
     tip = serializers.DecimalField(max_digits=8, decimal_places=2, min_value=0, max_value=10000, default=0)
     expected_total = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0, required=False)
+
+    def validate_delivery_location(self, value):
+        import math
+        if not value:
+            return {}
+        point = {
+            'lat': serializers.FloatField(min_value=-90, max_value=90).run_validation(value.get('lat')),
+            'lng': serializers.FloatField(min_value=-180, max_value=180).run_validation(value.get('lng')),
+            'landmark': serializers.CharField(max_length=150, allow_blank=True).run_validation(value.get('landmark', '')),
+        }
+        if not math.isfinite(point['lat']) or not math.isfinite(point['lng']):
+            raise serializers.ValidationError('Map coordinates must be finite.')
+        return point
+
+    def validate(self, data):
+        ids = data.get('cart_line_ids', [])
+        if ids and (len(ids) != len(data['items']) or len(ids) != len(set(ids))):
+            raise serializers.ValidationError('Cart lines do not match the ordered items.')
+        return data
 
 
 def customer_quote(branch, data):
@@ -123,7 +187,7 @@ def customer_order_data(link):
     row = order_data(order_queryset(link.order.branch).get(pk=link.order_id))
     seller = link.order.pos_receipts.order_by('pk').values_list('snapshot', flat=True).first() or {}
     row.update(request_key=link.request_key, reorder_items=link.items_payload, seller=seller.get('seller', {}), payment_review='VERIFIED' if row['settlement'] == 'PAID' else link.payment_review,
-               tip=str(link.tip), outlet_name=link.order.branch.name)
+               tip=str(link.tip), outlet_name=link.order.branch.name, delivery_location=link.delivery_location)
     return row
 
 
@@ -174,18 +238,23 @@ class CheckoutView(CustomerView):
             sequence.save(update_fields=['order_counter'])
             policy = pricing_policy(branch)
             policy['customer_tip'] = str(data['tip'])
+            delivery_location = data['delivery_location'] if data['fulfillment_type'] == 'DELIVERY' else {}
+            delivery_address = data['delivery_address']
+            if delivery_location:
+                delivery_address += f'\n{delivery_location["landmark"]}\nhttps://maps.google.com/?q={delivery_location["lat"]},{delivery_location["lng"]}'
             order = Order.objects.create(branch=branch, is_pos_managed=True, order_source='WEBSITE', status='PENDING',
                 order_number=f'WEB-{branch.pk}-{sequence.order_counter:08d}', pricing_policy=policy,
                 table=table, table_session_id=uuid.uuid4() if table else None, customer_name=data['customer_name'],
                 customer_phone=request.user.phone_number, fulfillment_type=data['fulfillment_type'],
-                delivery_address=data['delivery_address'], notes=data['notes'], payment_method='FONEPAY',
+                delivery_address=delivery_address, notes=data['notes'], payment_method='FONEPAY',
                 **{field: Decimal(priced[field]) for field in ['subtotal','total_payable','discount_amount','service_charge_amount','vat_included_amount','cash_round_down_savings']})
             add_lines(order, data['items'], priced, request.user)
             if table:
                 table.active_session_id = order.table_session_id
                 table.save(update_fields=['active_session_id'])
             link = CustomerOrder.objects.create(user=request.user, order=order, request_key=key, fingerprint=fingerprint,
-                receipt_image=content, receipt_type=proof.content_type, tip=data['tip'], items_payload=data['items'])
+                receipt_image=content, receipt_type=proof.content_type, tip=data['tip'], items_payload=data['items'], delivery_location=delivery_location)
+            services.consume_cart(request.user, branch, data['cart_line_ids'], data['items'])
             audit(order, request.user, '', 'Customer QR receipt submitted; payment verification pending')
             receipt(order, 'TOKEN', sequence)
             OrderOutboxEvent.objects.create(branch=branch, order=order, event_type='ORDER_CREATE', payload={'version':order.version})

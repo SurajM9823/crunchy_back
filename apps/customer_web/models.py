@@ -22,6 +22,39 @@ class SignupChallenge(models.Model):
     consumed = models.BooleanField(default=False)
 
 
+class CustomerAddress(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='delivery_addresses')
+    label = models.CharField(max_length=60)
+    address = models.CharField(max_length=800)
+    landmark = models.CharField(max_length=150, blank=True)
+    latitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    is_default = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ['-is_default', 'id']
+        constraints = [models.UniqueConstraint(fields=['user'], condition=models.Q(is_default=True), name='customer_one_default_address')]
+
+
+class CustomerCart(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    branch = models.ForeignKey('restaurants.Branch', on_delete=models.CASCADE)
+    items = models.JSONField(default=list)
+    version = models.PositiveBigIntegerField(default=0)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['user', 'branch'], name='customer_cart_scope')]
+
+
+class CustomerCartMerge(models.Model):
+    cart = models.ForeignKey(CustomerCart, on_delete=models.CASCADE)
+    key = models.UUIDField()
+    fingerprint = models.CharField(max_length=64)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['cart', 'key'], name='customer_cart_merge_once')]
+
+
 class CustomerOrder(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
     order = models.OneToOneField('orders.Order', on_delete=models.PROTECT, related_name='web_customer')
@@ -31,6 +64,7 @@ class CustomerOrder(models.Model):
     receipt_image = models.BinaryField()
     receipt_type = models.CharField(max_length=32)
     items_payload = models.JSONField(default=list)
+    delivery_location = models.JSONField(default=dict, blank=True)
     tip = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     payment_review = models.CharField(max_length=20, default='PENDING')
 
