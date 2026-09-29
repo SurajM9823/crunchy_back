@@ -2,6 +2,18 @@
 
 Frontend source lives in `C:\Users\Suraj\Desktop\crunchybag`. The temporary backend `.menu-work` directory has been removed. Entry points are `/admin?tab=pos_orders`, the billing tab, and the kitchen tab. Customer website ordering is a separate integration.
 
+## POS screen and floor configuration
+
+The order, ongoing-tab, floor, and billing screens use authenticated server data exclusively. Empty or failed requests never substitute sample orders or tables. The menu uses the POS channel snapshot with outlet prices and availability; create and append commands require a server quotation, `items`, `expected_total`, and the current order version for appends. Failed commands retain the cart.
+
+In **Floor & tables → Manage floors & tables**, create a named group (for example First floor), then add table labels and seat counts. Groups can be renamed, and unoccupied tables can be edited or deactivated. `tables/0002_tablegroup` preserves existing sections as groups without creating sample tables. Configuration commands use `/orders/pos/table-groups/` and `/orders/pos/tables/`, with an optional object ID for edits. They enforce outlet scope, idempotency, duplicate-label checks, and occupied-table protection. Changes publish through the durable menu revision stream so other terminals refresh their metadata.
+
+Vacant table cards start dine-in orders; occupied cards open the existing tab or bill. A completed service releases the table independently of outstanding credit. The billing register includes completed orders with balances, supports server-side filters and pagination, and displays collected payments separately from amounts due. Cash, enabled digital methods, split payments, partial collection, Khata, refunds, and saved receipt reprints use the transactional POS endpoints. A bill alone never marks an order paid.
+
+Startup loads each screen's snapshots once. Socket acknowledgements and unchanged heartbeats do not reload them. Domain events are debounced and deduplicated; reconnection fetches a fresh snapshot. The only repeating POS network timer is the WebSocket heartbeat. Static menus have no timed REST refresh; scheduled menus refresh once at the next configured pricing boundary. A healthy socket renews after five minutes by server policy, so an occasional new socket ticket is expected.
+
+Frontend regression checks: `npm run lint`, `npm run build`, and `npm run test:pos` from the separate frontend repository. Browser tests use Chrome and intercepted API fixtures, including a 95-second virtual idle interval, table order creation, appending, partial/split settlement, cart preservation after a price conflict, and idempotent recovery after an uncertain response. Backend checks: `python manage.py test apps.orders.test_pos apps.catalog --noinput`.
+
 ## Data and command flow
 
 - `/api/v1/orders/pos/` is authenticated and outlet-scoped. Existing customer checkout cannot submit a POS order or modify a staff-managed table tab.
