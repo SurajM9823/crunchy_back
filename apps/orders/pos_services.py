@@ -40,9 +40,9 @@ def totals(branch, subtotal, discount=0, method='CASH', policy=None):
     charge = money(net*Decimal(policy['service_rate'])/100) if policy['service_enabled'] else Decimal('0.00')
     net += charge
     savings = net % 1 if method == 'CASH' else Decimal('0.00')
-    total = net-savings
+    total = net-savings+Decimal(policy.get('customer_tip', '0'))
     vat_rate = Decimal(policy['vat_rate'])
-    vat = money(total*vat_rate/(100+vat_rate)) if policy['vat_enabled'] else Decimal('0.00')
+    vat = money((net-savings)*vat_rate/(100+vat_rate)) if policy['vat_enabled'] else Decimal('0.00')
     if total > Decimal('9999999999.99'):
         raise ValidationError('Order exceeds the supported monetary range.')
     return {k: str(v) for k,v in dict(subtotal=subtotal, discount_amount=discount, service_charge_amount=charge,

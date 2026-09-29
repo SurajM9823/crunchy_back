@@ -11,6 +11,7 @@ class Restaurant(TimeStampedModel):
     The Parent Restaurant Brand / Franchise entity.
     All franchise branches/outlets belong to this parent brand.
     """
+    payment_qr = models.ImageField(upload_to='payment_qr/', blank=True, null=True)
     name = models.CharField(
         _('brand name'),
         max_length=150,

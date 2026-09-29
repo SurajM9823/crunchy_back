@@ -215,6 +215,79 @@ class PosWorkflowTests(TestCase):
         order=self.command(order,'append',items=[{'product_id':self.product.pk,'quantity':1}],expected_total='400')
         self.assertEqual(order['service_charge_amount'],'0.00')
 
+    def test_layout_groups_tables_idempotency_and_isolation(self):
+        from apps.tables.models import TableGroup
+        group = self.post('table-groups/', {'name': 'First floor'}, key='floor')
+        self.assertEqual(group.status_code, 200, group.data)
+        self.assertEqual(self.post('table-groups/', {'name': 'First floor'}, key='floor').data, group.data)
+        self.assertEqual(TableGroup.objects.filter(branch=self.branch).count(), 1)
+        self.assertEqual(self.post('table-groups/', {'name': 'first FLOOR'}).status_code, 400)
+        data = {'table_number': 'Window A', 'capacity': 6, 'group_id': group.data['id']}
+        table = self.post('tables/', data)
+        self.assertEqual(table.status_code, 200, table.data)
+        self.assertEqual(self.post('tables/', data).status_code, 400)
+        self.assertEqual(self.post('tables/', {**data, 'table_number': 'X', 'capacity': 0}).status_code, 400)
+        foreign = TableGroup.objects.create(branch=self.other, name='Foreign')
+        self.assertEqual(self.post('tables/', {**data, 'group_id': foreign.pk}).status_code, 400)
+        self.assertEqual(self.post(f'table-groups/{foreign.pk}/', {'name': 'Stolen'}).status_code, 404)
+        response = self.post(f'table-groups/{group.data["id"]}/', {'name': 'Terrace'})
+        self.assertEqual(response.status_code, 200)
+        saved = DiningTable.objects.get(pk=table.data['id'])
+        self.assertEqual(saved.section, 'Terrace')
+        order = self.create(fulfillment_type='DINE_IN', table_id=saved.pk)
+        self.assertEqual(self.post(f'tables/{saved.pk}/', {**data, 'is_active': False}).status_code, 409)
+        meta = self.client.get(self.path('meta/')).data
+        self.assertEqual(next(t for t in meta['tables'] if t['id'] == saved.pk)['active_order_id'], order['id'])
+        self.client.force_authenticate(self.chef)
+        self.assertEqual(self.post('table-groups/', {'name': 'No permission'}).status_code, 403)
+
+    def test_quote_append_billing_contract_and_receipt_balances(self):
+        self.brand.is_service_charge_enabled = True
+        self.brand.service_charge_percent = Decimal('10')
+        self.brand.save()
+        items = [{'product_id': self.product.pk, 'quantity': 1}]
+        quoted = self.post('quote/', {'items': items, 'payment_method': 'CASH'}).data
+        order = self.create(expected_total=quoted['total_payable'], fulfillment_type='DINE_IN', table_id=self.table.pk)
+        self.assertEqual(order['total_payable'], '220.00')
+        quoted = self.post('quote/', {'items': items, 'order_id': order['id']}).data
+        self.assertEqual(quoted['order_version'], order['version'])
+        order = self.command(order, 'append', items=items, expected_total=quoted['total_payable'])
+        bill = self.post(f'{order["id"]}/billing-quote/', {'version': order['version'], 'discount_amount': '40'})
+        self.assertEqual(bill.data['total_payable'], '396.00')
+        order = self.command(order, 'settle', discount_amount='40', discount_reason='Promotion',
+                             tenders=[{'method': 'CASH', 'amount': '100'}, {'method': 'CARD', 'amount': '96'}])
+        self.assertEqual(order['settlement'], 'PARTIAL')
+        self.assertEqual(order['due_amount'], '200.00')
+        bill = self.post(f'{order["id"]}/billing-quote/', {'version': order['version']})
+        self.assertEqual(bill.data['due_amount'], '200.00')
+        self.assertEqual(order['outlet_id'], self.branch.pk)
+        order = self.command(order, 'settle', tenders=[{'method': 'CASH', 'amount': '200'}])
+        self.assertEqual(order['settlement'], 'PAID')
+        snap = self.client.get(self.path(f'receipts/{order["receipts"][-1]["id"]}/')).data['snapshot']
+        self.assertEqual(snap['paid_amount'], '396.00')
+        self.assertEqual(snap['due_amount'], '0')
+
+    def test_empty_lists_stay_empty_and_filters_include_table_and_refunds(self):
+        self.assertEqual(self.client.get(self.path() + '&open_tabs=true').data['results'], [])
+        order = self.create(fulfillment_type='DINE_IN', table_id=self.table.pk, tenders=[{'method': 'CASH', 'amount': '200'}])
+        self.assertEqual(self.client.get(self.path() + '&search=A1').data['count'], 1)
+        order = self.command(order, 'refund', amount='30', method='CASH', reason='Returned', reference='')
+        result = self.client.get(self.path() + '&settlement=REFUNDED')
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.data['count'], 1)
+
+    def test_static_menu_has_no_refresh_timer_and_pricing_boundaries_are_exact(self):
+        from datetime import datetime, time
+        from types import SimpleNamespace
+        from zoneinfo import ZoneInfo
+        from apps.catalog.pricing import next_price_change
+        now = datetime(2026, 9, 28, 23, 30, tzinfo=ZoneInfo('Asia/Kathmandu'))
+        self.assertIsNone(next_price_change([self.product], [], 'pos', now))
+        schedule = SimpleNamespace(is_active=True, channels=['pos'], days=['Mon'], start_time=time(22), end_time=time(2))
+        expected = datetime(2026, 9, 29, 2, tzinfo=ZoneInfo('Asia/Kathmandu')).timestamp()
+        self.assertEqual(next_price_change([self.product], [schedule], 'pos', now), expected)
+        self.assertIsNone(next_price_change([self.product], [schedule], 'web', now))
+
 
 @override_settings(CHANNEL_LAYERS={'default':{'BACKEND':'channels.layers.InMemoryChannelLayer'}})
 class PosSocketTests(TransactionTestCase):

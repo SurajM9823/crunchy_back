@@ -351,6 +351,7 @@ def organization_update(
         'enable_khalti',
         'logo',
         'logo_url',
+        'payment_qr',
     }
 
     logo_file = fields.get('logo')

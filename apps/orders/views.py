@@ -37,6 +37,8 @@ class CheckoutAPIView(APIView):
         serializer = CheckoutRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        if data.get('order_source') == 'WEBSITE':
+            return Response({'detail': 'Website orders require customer login and QR receipt checkout at /customer/checkout/.'}, status=403)
         if data.get('order_source') == 'POS':
             return Response({'detail':'Staff POS orders must use the authenticated /orders/pos/ endpoint.'},status=403)
 

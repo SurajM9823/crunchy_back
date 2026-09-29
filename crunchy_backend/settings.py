@@ -55,7 +55,11 @@ INSTALLED_APPS = [
     'apps.payments',
     'apps.inventory',
     'apps.delivery',
+    'apps.customer_web',
 ]
+
+# Temporary signup only: display a generated test code. Never an existing-account login bypass.
+CUSTOMER_DEMO_OTP = os.getenv('CUSTOMER_DEMO_OTP', 'true').lower() == 'true'
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',

@@ -23,6 +23,10 @@ def publish_pos_events():
                 async_to_sync(layer.group_send)(f'pos_{event.branch_id}',{'type':'pos_event','event_id':str(event.pk),
                     'event_type':event.event_type,'aggregate_id':event.order_id,'outlet_id':event.branch_id,
                     'timestamp':event.created_at.isoformat(),**event.payload})
+                from apps.customer_web.models import CustomerOrder
+                owner_id = CustomerOrder.objects.filter(order_id=event.order_id).values_list('user_id', flat=True).first()
+                if owner_id:
+                    async_to_sync(layer.group_send)(f'customer_orders_{owner_id}', {'type':'customer_event'})
                 # Public pickup displays receive token/status only, never customer/payment data.
                 order=event.order
                 async_to_sync(layer.group_send)(f'outlet_{event.branch_id}_display',{'type':'display_update',

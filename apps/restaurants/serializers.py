@@ -159,6 +159,7 @@ class OrganizationSerializer(serializers.ModelSerializer):
             'legal_name',
             'slug',
             'logo',
+            'payment_qr',
             'logo_url',
             'phone',
             'email',
@@ -189,6 +190,11 @@ class OrganizationSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
         read_only_fields = ['id', 'slug', 'created_at', 'updated_at']
+
+    def validate_payment_qr(self, value):
+        if value and (value.size > 5*1024*1024 or value.image.format not in ('JPEG', 'PNG', 'WEBP')):
+            raise serializers.ValidationError('Use a PNG, JPEG, or WebP QR image under 5 MB.')
+        return value
 
     def to_representation(self, instance):
         ret = super().to_representation(instance)
