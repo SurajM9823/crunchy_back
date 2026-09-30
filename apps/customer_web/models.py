@@ -85,3 +85,31 @@ class SmsDelivery(models.Model):
     next_attempt_at = models.DateTimeField(db_index=True)
     last_error = models.CharField(max_length=100, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+
+class WebsiteVisit(models.Model):
+    id = models.UUIDField(primary_key=True, editable=False)
+    branch = models.ForeignKey('restaurants.Branch', on_delete=models.CASCADE)
+    visitor_hash = models.CharField(max_length=64)
+    session_hash = models.CharField(max_length=64)
+    path = models.CharField(max_length=100)
+    channel = models.CharField(max_length=12)
+    device = models.CharField(max_length=10)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        indexes = [models.Index(fields=['branch', 'created_at'], name='website_visit_branch_date')]
+
+
+class CustomerContact(models.Model):
+    branch = models.ForeignKey('restaurants.Branch', on_delete=models.CASCADE)
+    phone = models.CharField(max_length=20)
+    name = models.CharField(max_length=150, blank=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    sources = models.JSONField(default=list)
+    last_seen = models.DateTimeField(default=timezone.now)
+    last_login = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['branch','phone'], name='customer_contact_outlet_phone')]
+        indexes = [models.Index(fields=['branch', '-last_seen'], name='customer_contact_recent')]

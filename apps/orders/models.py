@@ -179,6 +179,9 @@ class OrderItem(TimeStampedModel):
     void_reason = models.CharField(max_length=255, blank=True, default='')
     stock_consumption = models.JSONField(default=list, blank=True)
     kitchen_status = models.CharField(max_length=16, default='WAITING')
+    preparation_started_at = models.DateTimeField(null=True, blank=True)
+    ready_at = models.DateTimeField(null=True, blank=True)
+    served_at = models.DateTimeField(null=True, blank=True)
     order = models.ForeignKey(
         Order,
         on_delete=models.CASCADE,

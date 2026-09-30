@@ -1,9 +1,13 @@
+from .audience import WebsiteVisitView, WebsiteAnalyticsView, CustomerDirectoryView
 from django.urls import path
 from .auth import CustomerAuthView
 from .views import ProfileView, FavoriteView, CheckoutMetaView, QuoteView, CheckoutView, OrdersView, CancelView, PaymentProofView, SocketTicketView
 from .views import AddressView, AddressDetailView, CartView
 
 urlpatterns = [
+    path('traffic/', WebsiteVisitView.as_view()),
+    path('analytics/', WebsiteAnalyticsView.as_view()),
+    path('directory/', CustomerDirectoryView.as_view()),
     path('auth/<str:action>/', CustomerAuthView.as_view()),
     path('profile/', ProfileView.as_view()),
     path('addresses/', AddressView.as_view()),

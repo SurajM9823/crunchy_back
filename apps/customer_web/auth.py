@@ -45,7 +45,11 @@ class PhoneThrottle(AuthThrottle):
         return self.cache_format % {'scope': self.scope, 'ident': phone or self.get_ident(request)}
 
 
-def session_data(user):
+def session_data(user, outlet_id=None):
+    from .audience_services import record_login
+    record_login(user, outlet_id)
+    user.last_login = timezone.now()
+    user.save(update_fields=['last_login'])
     refresh = RefreshToken.for_user(user)
     refresh.set_exp(lifetime=timedelta(days=30))
     return {'access': str(refresh.access_token), 'refresh': str(refresh), 'user': UserOutputSerializer(user).data, 'outlet': None}
@@ -73,7 +77,7 @@ class CustomerAuthView(APIView):
             token = otp.verify(data, 'RECOVERY' if recovery else 'SIGNUP')
             return Response({'reset_token' if recovery else 'registration_token': token})
         if action == 'reset':
-            return Response(session_data(otp.reset_credentials(data)))
+            return Response(session_data(otp.reset_credentials(data), data.get('outlet_id')))
         if action == 'sms-status':
             from .models import SmsDelivery
             row = SmsDelivery.objects.filter(challenge_id=serializers.UUIDField().run_validation(data.get('challenge_id'))).first()
@@ -93,7 +97,7 @@ class CustomerAuthView(APIView):
                     challenge = SignupChallenge.objects.select_for_update().filter(pk=challenge_id, purpose='SIGNUP', verified=True, consumed=False, expires_at__gt=timezone.now()).first()
                     if not challenge:
                         raise ValidationError('Request a new signup code.')
-                    user = User(username=values['username'], email=values.get('email', '').lower() or None, phone_number=challenge.phone, role='CUSTOMER')
+                    user = User(username=values['username'], email=values.get('email', '').lower() or None, phone_number=challenge.phone, role='CUSTOMER', restaurant_id=challenge.restaurant_id)
                     try:
                         validate_password(values['password'], user)
                     except DjangoValidationError as error:
@@ -105,7 +109,7 @@ class CustomerAuthView(APIView):
                     challenge.save(update_fields=['consumed'])
             except IntegrityError:
                 raise ValidationError('This mobile, username, or email is already registered.')
-            return Response(session_data(user), status=201)
+            return Response(session_data(user, data.get('outlet_id')), status=201)
         if action == 'login':
             phone = phone_number(data.get('phone'))
             user = User.objects.filter(phone_number__in=[phone, phone[4:]], role='CUSTOMER', is_active=True).first()
@@ -129,7 +133,7 @@ class CustomerAuthView(APIView):
                 valid = user.check_password(credential)
             if not valid:
                 raise PermissionDenied('Mobile number or credentials are incorrect.')
-            return Response(session_data(user))
+            return Response(session_data(user, data.get('outlet_id')))
         raise ValidationError('Unknown authentication action.')
 
 

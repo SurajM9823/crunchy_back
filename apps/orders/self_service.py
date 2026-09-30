@@ -1,3 +1,4 @@
+from .preparation import append_allowed, sync_status
 """Persist kiosk and signed table-QR orders using the same ledger as staff POS."""
 import hashlib
 import json
@@ -75,6 +76,8 @@ def checkout(data, key):
     sequence, _ = PosSequence.objects.get_or_create(branch=branch)
     old_status = order.status if order else ''
     if order:
+        if not append_allowed(order):
+            raise ValidationError('This order cannot accept another round. Ask staff to start a new order.')
         if order.paid_amount or order.billed_at:
             raise Conflict('This table has been billed. Ask staff to start a new tab.')
         order.subtotal += Decimal(priced['subtotal'])
@@ -89,7 +92,7 @@ def checkout(data, key):
             table.active_session_id = order.table_session_id
             table.save(update_fields=['active_session_id', 'updated_at'])
     add_lines(order, data['items'], priced, None)
-    order.status = 'ACCEPTED' if order.items.filter(requires_kitchen=True, is_voided=False).exists() else 'READY'
+    sync_status(order)
     for field, value in totals(branch, order.subtotal, order.discount_amount, order.payment_method, order.pricing_policy).items():
         setattr(order, field, Decimal(value))
     order.save()

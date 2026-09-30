@@ -26,8 +26,14 @@ def order_data(order, detail=True):
     data['items'] = [{'id': r.pk, 'product_id': r.product_id, 'product_name': r.product_name, 'variant_id': r.variant_id,
         'variant_name': r.variant_name, 'quantity': r.quantity, 'unit_price': str(r.unit_price), 'line_total': str(r.line_total),
         'requires_kitchen': r.requires_kitchen, 'kitchen_status': r.kitchen_status, 'round_number': r.round_number, 'item_notes': r.item_notes,
+        'created_at':r.created_at.isoformat(), 'preparation_started_at':r.preparation_started_at.isoformat() if r.preparation_started_at else None,
+        'can_remove':r.kitchen_status=='WAITING' and not order.billed_at and not order.paid_amount and not order.credit_amount and order.status not in ['OUT_FOR_DELIVERY','COMPLETED','CANCELLED'] and (order.order_source!='WEBSITE' or order.status=='PENDING'),
         'combo_components': r.combo_components, 'is_voided': r.is_voided, 'void_reason': r.void_reason,
         'modifiers': [{'name': m.option_name, 'group': m.group_name, 'price_delta': str(m.price_delta)} for m in r.modifiers.all()]} for r in order.items.all()]
+    from .preparation import rounds, append_allowed
+    data['rounds'] = rounds(order)
+    data['can_append'] = append_allowed(order)
+    data['partial_ready'] = any(r['status']=='READY' for r in data['rounds']) and any(r['status'] in ('WAITING','PREPARING') for r in data['rounds'])
     if detail:
         data['payments'] = [{'id': p.transaction_id, 'amount': str(p.amount), 'method': p.payment_method, 'status': p.status,
                             'reference': p.gateway_ref, 'created_at': p.created_at.isoformat()} for p in order.payments.all()]

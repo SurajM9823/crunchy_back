@@ -54,7 +54,17 @@ class PosTransitionSerializer(VersionSerializer):
 
 class PosVoidSerializer(VersionSerializer):
     item_id = serializers.IntegerField(min_value=1)
+    quantity = serializers.IntegerField(min_value=1, required=False)
     reason = serializers.CharField(max_length=255, allow_blank=False)
+
+
+class PosRoundSerializer(VersionSerializer):
+    round_number = serializers.IntegerField(min_value=1)
+    status = serializers.ChoiceField(choices=['PREPARING','READY','SERVED'])
+
+
+class PosCallSerializer(VersionSerializer):
+    round_number = serializers.IntegerField(min_value=1, required=False)
 
 class PosRefundSerializer(VersionSerializer):
     amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0.01'))

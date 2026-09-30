@@ -344,3 +344,42 @@ seller information. Reprints preserve those saved details. The printed QR grants
 order-status access only; full receipts still require the customer's login,
 the guest checkout capability, or staff outlet permissions. Print at actual size
 on 80 mm paper; confirm the QR scans on the outlet's physical printer before use.
+
+
+## Customer SMS, website analytics, and customer directory
+
+Deploy backend and frontend together, install `requirements.txt`, then run
+`python manage.py migrate`. Restart Django/Daphne, Celery workers and Celery Beat.
+The customer contact migration imports existing web, table QR and kiosk order
+contacts, plus registered customers associated with a brand. Legacy accounts
+without a brand are imported only when there is one unambiguous active brand.
+
+- Open `/admin?tab=organization` and save **Sparrow SMS** settings. Enter Sparrow's
+  approved sender identity and API token, then enable customer OTP. The API token
+  is write-only and encrypted using a key derived from Django `SECRET_KEY`; keep
+  that secret stable, and re-enter the provider token after changing it.
+- Set `CUSTOMER_DEMO_OTP=false` in deployment. It defaults off and is also disabled
+  when `DEBUG=false`. Live SMS never returns the code in the API or browser UI.
+- `send-customer-sms` runs every 10 seconds through Beat. The database queue retains
+  delivery attempts across restarts, retries temporary errors with backoff, and
+  erases OTP payloads after submission/failure/expiry. Django admin's SMS delivery
+  list exposes status and safe error codes, not OTPs or provider credentials.
+- Sparrow must approve the sender and server IP and the account needs SMS credit.
+  Provider acceptance means queued for delivery, not confirmed handset delivery.
+  Transport retries can repeat the same SMS code if a provider response was lost.
+- Customer OTPs go only to the requesting customer. Admin mobile numbers, keyword,
+  shortcode and public base URL are stored configuration for future notification,
+  incoming-message and one-click-link workflows; these do not enable such flows.
+- `/admin?tab=analytics` shows recorded visitors, sessions and page views over
+  7/30/90 days. Visitors are browser identifiers, not verified people; shared kiosk
+  browsers count as devices. No old traffic is fabricated. Stored visits exclude
+  query strings, auth tokens, names and phones; visitor/session identifiers are
+  hashed. Browser Do Not Track and Global Privacy Control skip collection.
+- `/admin?tab=customers` is an outlet-scoped, searchable, paginated customer table.
+  A guest-supplied number is contact information, not proof of phone ownership.
+  Registered means a web account exists for that mobile. Order value excludes cancelled
+  orders and does not claim payment collection.
+- Keep `/ws/outlets/<id>/analytics/` proxied to Daphne. This socket exposes only a
+  revision hash; private traffic aggregates and contacts require authorized REST
+  access. Pages refresh changed data on WebSocket heartbeats and reconnection.
+- `prune-website-visits` removes raw visits older than 90 days daily through Beat.

@@ -8,6 +8,25 @@ from apps.user_accounts.models import User
 from .models import CustomerOrder
 
 
+class AudienceRevisionConsumer(AsyncJsonWebsocketConsumer):
+    """Public revision notifications only; all analytics and contacts require staff REST auth."""
+    async def connect(self):
+        self.outlet_id = self.scope['url_route']['kwargs']['outlet_id']
+        await self.accept()
+
+    @database_sync_to_async
+    def revision(self):
+        from django.db.models import Max
+        from .models import WebsiteVisit, CustomerContact
+        visits = WebsiteVisit.objects.filter(branch_id=self.outlet_id).aggregate(last=Max('created_at'))
+        contacts = CustomerContact.objects.filter(branch_id=self.outlet_id).aggregate(last=Max('last_seen'))
+        return hashlib.sha256(repr((visits, contacts)).encode()).hexdigest()
+
+    async def receive_json(self, content, **kwargs):
+        if content.get('type') == 'ping':
+            await self.send_json({'event_type':'HEARTBEAT','revision':await self.revision()})
+
+
 class CustomerOrdersConsumer(AsyncJsonWebsocketConsumer):
     async def connect(self):
         try:

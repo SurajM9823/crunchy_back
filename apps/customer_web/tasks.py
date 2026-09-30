@@ -62,3 +62,9 @@ def send_pending_sms():
                     row.last_error = error
                     row.next_attempt_at = timezone.now()+timedelta(seconds=60*2**(row.attempts-1))
             row.save()
+
+
+@shared_task(autoretry_for=(Exception,), retry_backoff=60, max_retries=3)
+def prune_website_visits():
+    from .models import WebsiteVisit
+    WebsiteVisit.objects.filter(created_at__lt=timezone.now()-timedelta(days=90)).delete()

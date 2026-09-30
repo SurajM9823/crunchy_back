@@ -1,9 +1,10 @@
 from django.urls import re_path
 from .pos_consumers import PosConsumer
-from apps.customer_web.consumers import CustomerOrdersConsumer
+from apps.customer_web.consumers import CustomerOrdersConsumer, AudienceRevisionConsumer
 from .consumers import KitchenConsumer, LiveDisplayConsumer, OrderTrackingConsumer
 
 websocket_urlpatterns = [
+    re_path(r'^ws/outlets/(?P<outlet_id>\d+)/analytics/$', AudienceRevisionConsumer.as_asgi()),
     re_path(r'^ws/customer/orders/$', CustomerOrdersConsumer.as_asgi()),
     re_path(r'^ws/pos/(?P<outlet_id>\d+)/$', PosConsumer.as_asgi()),
     re_path(r'^ws/outlets/(?P<outlet_id>\w+)/kitchen/$', KitchenConsumer.as_asgi()),

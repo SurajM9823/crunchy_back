@@ -225,6 +225,7 @@ CELERY_TIMEZONE = 'UTC'
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 30 * 60
 CELERY_BEAT_SCHEDULE = {
+    'prune-website-visits': {'task': 'apps.customer_web.tasks.prune_website_visits', 'schedule': 86400.0},
     'send-customer-sms': {'task': 'apps.customer_web.tasks.send_pending_sms', 'schedule': 10.0},
     'publish-pos-outbox': {'task': 'apps.orders.tasks.publish_pos_events', 'schedule': 1.0},
     'publish-menu-outbox': {'task': 'apps.catalog.tasks.publish_menu_events', 'schedule': 1.0},

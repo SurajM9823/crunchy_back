@@ -1,3 +1,4 @@
+from .preparation import append_allowed, sync_status, advance_round, call_round, rounds
 """Atomic staff commands: price authority, concurrency, ledgers and durable events."""
 import hashlib
 import json
@@ -91,11 +92,12 @@ def consume_stock(order, row, actor):
     row.save(update_fields=['stock_consumption'])
 
 
-def restore_stock(order, row, actor):
+def restore_stock(order, row, actor, quantity=None):
     from apps.inventory.models import InventoryItem, StockTransaction, StockMovementLedger
     if row.kitchen_status != 'WAITING':
         return
-    needs = {r['item_id']: Decimal(r['quantity']) for r in row.stock_consumption}
+    fraction = Decimal(quantity or row.quantity) / row.quantity
+    needs = {r['item_id']: Decimal(r['quantity'])*fraction for r in row.stock_consumption}
     for item in InventoryItem.objects.select_for_update().filter(pk__in=needs, branch=order.branch).order_by('pk'):
         previous = item.current_stock
         item.current_stock += needs[item.pk]
@@ -124,7 +126,39 @@ def add_lines(order, raw_items, priced, actor):
         OrderItemModifier.objects.bulk_create([OrderItemModifier(order_item=row,group_name=g.name,option_name=o.name,price_delta=o.price_delta)
             for g in product.modifier_groups.all() for o in g.options.all() if o.pk in selected])
         consume_stock(order,row,actor)
+    if not order.items.filter(round_number=round_number, requires_kitchen=True).exists():
+        order.items.filter(round_number=round_number).update(kitchen_status='READY', ready_at=timezone.now())
     return round_number
+
+
+def remove_waiting_item(order, data, actor=None):
+    if order.billed_at or order.paid_amount or order.credit_amount or order.status in ('OUT_FOR_DELIVERY','COMPLETED','CANCELLED'):
+        raise ValidationError('Only unpaid, unbilled, unprepared items can be reduced or removed.')
+    if order.order_source == 'WEBSITE' and order.status != 'PENDING':
+        raise ValidationError('Confirmed web orders cannot be edited.')
+    row = order.items.filter(pk=data['item_id'], is_voided=False).first()
+    if not row or row.kitchen_status != 'WAITING' or row.preparation_started_at:
+        raise ValidationError('Cooking, ready and served items cannot be reduced or removed.')
+    quantity = data.get('quantity', row.quantity)
+    if quantity > row.quantity:
+        raise ValidationError('Removal quantity exceeds this line quantity.')
+    if quantity == row.quantity and order.items.filter(is_voided=False).count() <= 1:
+        raise ValidationError('Cancel the order to remove its final item.')
+    reduction = row.line_total * Decimal(quantity) / row.quantity
+    restore_stock(order, row, actor, quantity)
+    if quantity == row.quantity:
+        row.is_voided = True
+    else:
+        fraction = Decimal(row.quantity-quantity)/row.quantity
+        row.stock_consumption = [{**value,'quantity':str(Decimal(value['quantity'])*fraction)} for value in row.stock_consumption]
+        row.quantity -= quantity
+        row.line_total -= reduction
+    row.void_reason = data['reason']
+    row.save()
+    order.subtotal -= reduction
+    apply_totals(order)
+    if order.status != 'PENDING':
+        sync_status(order)
 
 
 def record_tenders(order, tenders, actor):
@@ -177,7 +211,7 @@ def audit(order, actor, previous, note):
 def mutate(branch, actor, key, action, data, order_id=None):
     if not key or len(key)>128:
         raise ValidationError('A valid Idempotency-Key header is required.')
-    capability = {'settle':'billing','bill':'billing','refund':'refund','void':'discount','transition':'kitchen','call':'kitchen'}.get(action,'orders')
+    capability = {'settle':'billing','bill':'billing','refund':'refund','void':'discount','transition':'kitchen','call':'kitchen','round':'kitchen'}.get(action,'orders')
     require_access(actor,branch,capability)
     fingerprint = hashlib.sha256(json.dumps([actor.pk,action,order_id,data],sort_keys=True,default=str).encode()).hexdigest()
     # Short per-outlet write lock also serializes table allocation and receipt numbering.
@@ -223,14 +257,18 @@ def mutate(branch, actor, key, action, data, order_id=None):
         if order.version != data['version']: raise Conflict()
         previous = order.status
         if action == 'append':
-            if order.status not in ACTIVE: raise ValidationError('This order is closed.')
+            if not append_allowed(order): raise ValidationError('New rounds are allowed only on open POS, kiosk or table orders before dispatch. Confirmed web orders cannot be edited.')
             if not branch.accepting_orders: raise ValidationError('This outlet is not accepting new rounds.')
             priced = quote_items(branch,data['items'],'pos')
             order.subtotal += Decimal(priced['subtotal'])
             apply_totals(order)
             if order.total_payable != data['expected_total']: raise Conflict('Order total changed. Review a fresh quote.')
             add_lines(order,data['items'],priced,actor)
-            if any(r.requires_kitchen for r in order.items.filter(is_voided=False)): order.status='ACCEPTED'
+            sync_status(order)
+        elif action == 'round':
+            advance_round(order, data['round_number'], data['status'])
+        elif action == 'call':
+            data['round_number'] = call_round(order, data.get('round_number'))
         elif action == 'settle':
             if order.status == 'CANCELLED': raise ValidationError('Cancelled orders cannot be settled.')
             if 'discount_amount' in data and data['discount_amount'] != order.discount_amount:
@@ -255,6 +293,8 @@ def mutate(branch, actor, key, action, data, order_id=None):
             if target not in allowed.get(order.status,[]): raise ValidationError('This status transition is not allowed.')
             if target=='OUT_FOR_DELIVERY' and order.fulfillment_type!='DELIVERY': raise ValidationError('Only delivery orders can be dispatched.')
             if target=='CANCELLED':
+                if order.items.filter(is_voided=False, requires_kitchen=True).exclude(kitchen_status='WAITING').exists():
+                    raise ValidationError('Cooking has started. Remove only waiting items; this order cannot be cancelled.')
                 require_access(actor,branch,'discount')
                 if not data['reason']: raise ValidationError('Enter a cancellation reason.')
                 if order.paid_amount > order.refunded_amount: raise ValidationError('Refund collected payments before cancelling this order.')
@@ -263,21 +303,21 @@ def mutate(branch, actor, key, action, data, order_id=None):
                     order.credit_amount=0
                 for row in order.items.filter(is_voided=False): restore_stock(order,row,actor)
             order.status=target
-            if target=='PREPARING': order.items.filter(is_voided=False,requires_kitchen=True,kitchen_status='WAITING').update(kitchen_status='PREPARING')
-            if target=='READY': order.items.filter(is_voided=False).exclude(kitchen_status='READY').update(kitchen_status='READY')
+            if target=='PREPARING':
+                order.items.filter(is_voided=False,kitchen_status='WAITING').update(kitchen_status='PREPARING',preparation_started_at=timezone.now())
+                sync_status(order)
+            if target=='READY':
+                order.items.filter(is_voided=False,kitchen_status='PREPARING').update(kitchen_status='READY',ready_at=timezone.now())
+                sync_status(order)
+            if target in ('OUT_FOR_DELIVERY','COMPLETED'):
+                if order.items.filter(is_voided=False,kitchen_status__in=['WAITING','PREPARING']).exists():
+                    raise ValidationError('Every round must be ready before final handover or dispatch.')
+                if target=='COMPLETED':
+                    order.items.filter(is_voided=False).exclude(kitchen_status='SERVED').update(kitchen_status='SERVED',served_at=timezone.now())
             if target in ('COMPLETED','CANCELLED') and order.table_id:
                 DiningTable.objects.filter(pk=order.table_id,active_session_id=order.table_session_id).update(active_session_id=None)
         elif action == 'void':
-            if order.billed_at or order.paid_amount or order.credit_amount or order.status not in ['PENDING','ACCEPTED']:
-                raise ValidationError('Only unbilled items that have not entered preparation can be removed.')
-            row=order.items.filter(pk=data['item_id'],is_voided=False).first()
-            if not row: raise ValidationError('Active order item not found.')
-            if row.requires_kitchen and row.kitchen_status != 'WAITING': raise ValidationError('This item has already entered preparation.')
-            if order.items.filter(is_voided=False).count()<=1: raise ValidationError('Cancel the order to remove its final item.')
-            row.is_voided=True; row.void_reason=data['reason']; row.save(update_fields=['is_voided','void_reason'])
-            restore_stock(order,row,actor)
-            order.subtotal-=row.line_total
-            apply_totals(order)
+            remove_waiting_item(order, data, actor)
         elif action == 'refund':
             if data['amount']>order.paid_amount-order.refunded_amount: raise ValidationError('Refund exceeds collected payments.')
             PaymentTransaction.objects.create(order=order,branch=branch,transaction_id=f'REF-{uuid.uuid4().hex}',amount=data['amount'],
@@ -287,14 +327,14 @@ def mutate(branch, actor, key, action, data, order_id=None):
         elif action != 'call': raise ValidationError('Unknown command.')
         order.version+=1
     order.save()
-    audit(order,actor,previous, data.get('reason') or data.get('discount_reason') or f'Staff POS {action}')
-    if action in ['create','append']: receipt(order,'TOKEN',sequence)
+    audit(order,actor,previous, data.get('reason') or data.get('discount_reason') or (f'Round {data["round_number"]}: {data.get("status", action)}' if data.get('round_number') else f'Staff POS {action}'))
+    if action in ['create','append','void']: receipt(order,'TOKEN',sequence)
     if action in ('settle','bill') or (action=='create' and data['tenders']): receipt(order,'BILL',sequence)
     if action=='refund': receipt(order,'REFUND',sequence)
     response=order_data(order_queryset(branch).get(pk=order.pk))
     if action in ('create','append','void') or (action=='transition' and order.status=='CANCELLED'):
         from apps.catalog.services import menu_changed
         menu_changed(branch_id=branch.pk)
-    OrderOutboxEvent.objects.create(branch=branch,order=order,event_type=f'ORDER_{action.upper()}',payload={'version':order.version})
+    OrderOutboxEvent.objects.create(branch=branch,order=order,event_type=f'ORDER_{action.upper()}',payload={'version':order.version, 'round_number':data.get('round_number'), 'round_status':data.get('status') if action=='round' else None})
     PosMutation.objects.create(branch=branch,key=key,fingerprint=fingerprint,response=response)
     return response

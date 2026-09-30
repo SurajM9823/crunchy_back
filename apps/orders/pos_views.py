@@ -10,7 +10,7 @@ from .pos_selectors import list_orders, order_queryset, order_data
 from .pos_services import quote, mutate, totals
 from decimal import Decimal
 from .pos_serializers import (PosListSerializer, PosQuoteSerializer, PosCreateSerializer, PosAppendSerializer,
-    PosSettleSerializer, PosTransitionSerializer, PosVoidSerializer, PosRefundSerializer, VersionSerializer, PosBillQuoteSerializer)
+    PosSettleSerializer, PosTransitionSerializer, PosVoidSerializer, PosRefundSerializer, VersionSerializer, PosBillQuoteSerializer, PosRoundSerializer, PosCallSerializer)
 from .models import PosReceipt, Order
 
 
@@ -100,7 +100,7 @@ class PosCommandView(StaffAPIView):
     def post(self,request,order_id,action):
         branch=staff_branch(request)
         serializers={'append':PosAppendSerializer,'settle':PosSettleSerializer,'transition':PosTransitionSerializer,
-            'void':PosVoidSerializer,'refund':PosRefundSerializer,'call':VersionSerializer,'bill':VersionSerializer}
+            'void':PosVoidSerializer,'refund':PosRefundSerializer,'call':PosCallSerializer,'round':PosRoundSerializer,'bill':VersionSerializer}
         serializer=serializers[action](data=request.data)
         serializer.is_valid(raise_exception=True)
         return Response(mutate(branch,request.user,request.headers.get('Idempotency-Key'),action,serializer.validated_data,order_id))
