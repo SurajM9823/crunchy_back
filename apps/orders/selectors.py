@@ -89,20 +89,19 @@ def get_live_tv_pickup_tickets(branch_id: int) -> dict:
     TV Screen Live Display Query:
     Returns order numbers separated into 'preparing' and 'ready' columns.
     """
-    preparing_orders = list(
-        Order.objects
-        .filter(branch_id=branch_id, status=OrderStatus.PREPARING)
-        .order_by('created_at')
-        .values_list('order_number', flat=True)[:20]
-    )
-    ready_orders = list(
-        Order.objects
-        .filter(branch_id=branch_id, status=OrderStatus.READY)
-        .order_by('-updated_at')
-        .values_list('order_number', flat=True)[:20]
-    )
-    return {
-        'preparing': preparing_orders,
-        'ready': ready_orders,
-    }
-
+    from django.utils import timezone
+    from datetime import timedelta
+    from django.db.models import Q
+    rows = Order.objects.filter(branch_id=branch_id).filter(
+        Q(status__in=['ACCEPTED', 'PREPARING', 'READY']) |
+        Q(status='COMPLETED', updated_at__gte=timezone.now()-timedelta(hours=2))
+    ).select_related('table').order_by('created_at')
+    # Public screens expose only pickup identifiers, never phone/address/payment details.
+    tickets = [{'id': o.pk, 'order_number': o.order_number, 'status': o.status,
+                'fulfillment_type': o.fulfillment_type, 'table_number': o.table.table_number if o.table_id else None,
+                'created_at': o.created_at.isoformat()} for o in rows]
+    from .models import OrderOutboxEvent
+    latest = OrderOutboxEvent.objects.filter(branch_id=branch_id).order_by('-created_at', '-pk').values_list('pk', flat=True).first()
+    return {'tickets': tickets, 'revision': str(latest or ''),
+            'preparing': [o['order_number'] for o in tickets if o['status'] in ('ACCEPTED', 'PREPARING')],
+            'ready': [o['order_number'] for o in tickets if o['status'] == 'READY']}

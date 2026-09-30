@@ -29,10 +29,16 @@ def publish_pos_events():
                     async_to_sync(layer.group_send)(f'customer_orders_{owner_id}', {'type':'customer_event'})
                 # Public pickup displays receive token/status only, never customer/payment data.
                 order=event.order
+                envelope = {'event_id':str(event.pk),'event_type':event.event_type,
+                    'aggregate_id':order.pk,'outlet_id':event.branch_id,'timestamp':event.created_at.isoformat(),
+                    'order_number':order.order_number,'status':order.status,
+                    'fulfillment_type':order.fulfillment_type,
+                    'table_number':order.table.table_number if order.table_id else None}
+                async_to_sync(layer.group_send)(f'outlet_{event.branch_id}_kitchen',
+                    {'type':'kitchen_ticket_update', **envelope})
+                async_to_sync(layer.group_send)(f'order_{order.pk}', {'type':'order_event', **envelope})
                 async_to_sync(layer.group_send)(f'outlet_{event.branch_id}_display',{'type':'display_update',
-                    'event_id':str(event.pk),'event_type':event.event_type,'aggregate_id':order.pk,
-                    'outlet_id':event.branch_id,'timestamp':event.created_at.isoformat(),
-                    'order_number':order.order_number,'status':order.status})
+                    **envelope})
                 event.published_at=timezone.now(); event.last_error=''
             except Exception as exc:
                 event.attempts+=1; event.last_error=str(exc)[:2000]

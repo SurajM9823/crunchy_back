@@ -215,4 +215,6 @@ class LiveDisplayAPIView(APIView):
 
     def get(self, request, outlet_id):
         tickets = get_live_tv_pickup_tickets(outlet_id)
-        return Response(tickets, status=status.HTTP_200_OK)
+        response = Response(tickets, status=status.HTTP_200_OK)
+        response['Cache-Control'] = 'no-store'
+        return response

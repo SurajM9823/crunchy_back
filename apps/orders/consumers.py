@@ -57,6 +57,23 @@ class LiveDisplayConsumer(AsyncWebsocketConsumer):
         if hasattr(self, 'group_name'):
             await self.channel_layer.group_discard(self.group_name, self.channel_name)
 
+    async def receive(self, text_data=None, bytes_data=None):
+        try:
+            data = json.loads(text_data or '{}')
+        except ValueError:
+            return
+        if data.get('type') == 'ping':
+            from channels.db import database_sync_to_async
+            from .models import OrderOutboxEvent
+            from django.core.cache import cache
+            from django.utils import timezone
+            @database_sync_to_async
+            def heartbeat():
+                cache.set(f'display:heartbeat:{self.outlet_id}:{self.channel_name}', timezone.now().isoformat(), 90)
+                latest = OrderOutboxEvent.objects.filter(branch_id=self.outlet_id).order_by('-created_at', '-pk').values_list('pk', flat=True).first()
+                return str(latest or '')
+            await self.send(text_data=json.dumps({'event_type': 'HEARTBEAT', 'revision': await heartbeat()}))
+
     async def display_update(self, event):
         await self.send(text_data=json.dumps(event))
 

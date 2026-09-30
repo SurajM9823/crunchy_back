@@ -307,3 +307,26 @@ python manage.py collectstatic --noinput
 echo "Crunchy Bag Backend Updated Successfully!"
 ```
 
+## Live TV, kiosk, and table QR ordering
+
+Deploy the backend and the `crunchybag` frontend build together. Install the updated
+requirements (including `qrcode`) and restart Daphne, Celery, and Celery Beat.
+The existing `publish-pos-outbox` Beat job delivers committed order changes and
+call announcements through Redis. Keep `/ws/` proxied to Daphne; HTTP-only Django
+workers cannot serve these connections.
+
+- Enable kiosk and table QR ordering for the outlet. Open `/kiosk?outlet_id=<id>`
+  and `/tv?outlet_id=<id>` using the same outlet ID as staff POS/KDS.
+- In POS floor/table management, create or select an active table and choose
+  **Generate table QR**. Download the SVG for printing. `FRONTEND_BASE_URL`
+  controls the QR destination origin and defaults to `https://crunchybag.com`.
+- Kiosk and QR orders use server quotes, idempotent checkout, stock deductions,
+  and the staff order register. These orders remain unpaid until staff records
+  collection; the kiosk does not simulate gateway approval.
+- Click the TV's **Speaker Test** once to enable browser audio. Calls arrive on
+  the TV without navigation; ready announcements queue instead of overwriting
+  each other. Browser autoplay permissions still apply.
+- Public display snapshots/events expose pickup identifiers and statuses only.
+  Guest order details require the signed tracking token returned by checkout.
+- Reconnection and changed WebSocket heartbeat revisions refresh REST snapshots.
+  There is no recurring REST polling timer for TV or kitchen orders.

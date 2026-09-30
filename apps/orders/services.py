@@ -49,47 +49,12 @@ def generate_order_number(branch: Branch) -> str:
 
 
 def broadcast_order_event(order: Order, event_type: str, extra_data: dict = None):
-    """
-    Dispatches zero-page-reload WebSocket events to KDS, POS, TV, and customer phone.
-    """
-    channel_layer = get_channel_layer()
-    if not channel_layer:
-        return
-
-    branch_id = order.branch_id
-    payload = {
-        'type': 'order_event',
-        'event': event_type,
-        'order_id': order.id,
-        'order_number': order.order_number,
-        'status': order.status,
-        'fulfillment_type': order.fulfillment_type,
-        'table_number': order.table.table_number if order.table else None,
-        'total_payable': str(order.total_payable),
-        'timestamp': timezone.now().isoformat(),
-    }
-    if extra_data:
-        payload.update(extra_data)
-
-    # 1. Customer live tracking stream
-    async_to_sync(channel_layer.group_send)(f"order_{order.id}", payload)
-
-    # 2. Cashier POS & Operations stream
-    async_to_sync(channel_layer.group_send)(f"outlet_{branch_id}_operations", payload)
-
-    # 3. Kitchen Display System (KDS) stream
-    # Only if order contains items that require kitchen prep
-    has_kitchen_items = order.items.filter(requires_kitchen=True).exists()
-    if has_kitchen_items:
-        kitchen_payload = dict(payload)
-        kitchen_payload['type'] = 'kitchen_ticket_update'
-        async_to_sync(channel_layer.group_send)(f"outlet_{branch_id}_kitchen", kitchen_payload)
-
-    # 4. TV pickup display stream (when in PREPARING or READY)
-    if order.status in (OrderStatus.PREPARING, OrderStatus.READY):
-        display_payload = dict(payload)
-        display_payload['type'] = 'display_update'
-        async_to_sync(channel_layer.group_send)(f"outlet_{branch_id}_display", display_payload)
+    """Record committed changes for the same durable stream used by staff commands."""
+    from .models import OrderOutboxEvent
+    normalized = {'ORDER_CREATED': 'ORDER_CREATE', 'ROUND_APPENDED': 'ORDER_APPEND',
+                  'STATUS_CHANGED': 'ORDER_TRANSITION'}.get(event_type, event_type)
+    OrderOutboxEvent.objects.create(branch=order.branch, order=order, event_type=normalized,
+                                   payload={'version': order.version, **(extra_data or {})})
 
 
 @transaction.atomic

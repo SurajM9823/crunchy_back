@@ -1,4 +1,5 @@
 from django.urls import path
+from .self_service import SelfServiceCheckoutView, SelfServiceOrderView, SelfServiceTablesView, SelfServiceQuoteView
 from .pos_views import PosOrdersView, PosQuoteView, PosMetaView, PosDetailView, PosCommandView, PosReceiptView, PosSocketTicketView, PosBillQuoteView, PosLayoutView
 from .views import (
     CheckoutAPIView,
@@ -10,6 +11,10 @@ from .views import (
 )
 
 urlpatterns = [
+    path('self-service/quote/', SelfServiceQuoteView.as_view()),
+    path('self-service/checkout/', SelfServiceCheckoutView.as_view()),
+    path('self-service/order/', SelfServiceOrderView.as_view()),
+    path('self-service/tables/<int:outlet_id>/', SelfServiceTablesView.as_view()),
     path('pos/', PosOrdersView.as_view()),
     path('pos/quote/', PosQuoteView.as_view()),
     path('pos/meta/', PosMetaView.as_view()),

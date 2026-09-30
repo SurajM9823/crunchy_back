@@ -95,6 +95,7 @@ ASGI_APPLICATION = 'crunchy_backend.asgi.application'
 
 # Database
 # Default: SQLite for local setup, override with DATABASE_URL if PostgreSQL is configured
+FRONTEND_BASE_URL = os.getenv('FRONTEND_BASE_URL', 'https://crunchybag.com')
 DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///db.sqlite3')
 if DATABASE_URL.startswith('sqlite:///'):
     db_path = DATABASE_URL.replace('sqlite:///', '')
