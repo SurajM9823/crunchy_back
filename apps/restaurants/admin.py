@@ -1,9 +1,7 @@
 from django import forms
-from django.contrib import admin, messages
-from django.core.exceptions import ValidationError
+from django.contrib import admin
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
-from apps.common.utils import normalize_phone_number
 from apps.user_accounts.models import User, UserRole
 from apps.user_accounts.services import user_create
 from .models import Restaurant, Branch, OperateType
@@ -134,23 +132,20 @@ class BranchAdminForm(forms.ModelForm):
         required=False,
         label=_('New Admin Username'),
         help_text=_('Enter username to automatically create a new Outlet Administrator.'),
-        widget=forms.TextInput(attrs={'autocomplete': 'off', 'placeholder': 'e.g. branch_mgr_dm01'}),
     )
     new_admin_phone = forms.CharField(
         required=False,
         label=_('New Admin Phone'),
         help_text=_('Contact number for the new admin (e.g. +977 9841234567).'),
-        widget=forms.TextInput(attrs={'autocomplete': 'off', 'placeholder': '+977 98XXXXXXXX'}),
     )
     new_admin_email = forms.EmailField(
         required=False,
         label=_('New Admin Email'),
         help_text=_('Email address for the new admin.'),
-        widget=forms.EmailInput(attrs={'autocomplete': 'off', 'placeholder': 'manager@outlet.com'}),
     )
     new_admin_password = forms.CharField(
         required=False,
-        widget=forms.PasswordInput(render_value=False, attrs={'autocomplete': 'new-password'}),
+        widget=forms.PasswordInput(render_value=False),
         label=_('New Admin Password'),
         help_text=_('Set password for the new Outlet Administrator.'),
     )
@@ -173,24 +168,6 @@ class BranchAdminForm(forms.ModelForm):
                 self.add_error('new_admin_password', _('Password is required when creating a new Outlet Admin.'))
             if not (username or phone or email):
                 self.add_error('new_admin_username', _('Provide at least one identifier (username, phone, or email).'))
-
-            if username and User.objects.filter(username__iexact=username.strip()).exists():
-                self.add_error(
-                    'new_admin_username',
-                    _(f"A user with username '{username}' already exists. Leave Quick Create blank if you only want to update branch settings.")
-                )
-            if email and User.objects.filter(email__iexact=email.strip().lower()).exists():
-                self.add_error(
-                    'new_admin_email',
-                    _(f"A user with email '{email}' already exists. Leave Quick Create blank if you only want to update branch settings.")
-                )
-            if phone:
-                norm_phone = normalize_phone_number(phone)
-                if User.objects.filter(phone_number=norm_phone).exists():
-                    self.add_error(
-                        'new_admin_phone',
-                        _(f"A user with phone number '{norm_phone}' already exists. Leave Quick Create blank if you only want to update branch settings.")
-                    )
 
         return cleaned_data
 
@@ -314,22 +291,16 @@ class BranchAdmin(admin.ModelAdmin):
 
         # Auto-create new Outlet Admin user if provided
         if new_password and (new_username or new_phone or new_email):
-            try:
-                new_user = user_create(
-                    username=new_username,
-                    phone_number=new_phone,
-                    email=new_email,
-                    password=new_password,
-                    role=UserRole.BRANCH_MANAGER,
-                    is_staff=True,
-                    is_verified=True,
-                )
-                obj.manager = new_user
-            except ValidationError as e:
-                messages.error(
-                    request,
-                    f"Could not create Outlet Admin user: {e.message if hasattr(e, 'message') else e}"
-                )
+            new_user = user_create(
+                username=new_username,
+                phone_number=new_phone,
+                email=new_email,
+                password=new_password,
+                role=UserRole.BRANCH_MANAGER,
+                is_staff=True,
+                is_verified=True,
+            )
+            obj.manager = new_user
 
         super().save_model(request, obj, form, change)
 
