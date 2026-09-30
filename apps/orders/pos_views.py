@@ -110,7 +110,8 @@ class PosReceiptView(StaffAPIView):
     def get(self,request,receipt_id):
         branch=staff_branch(request)
         row=get_object_or_404(PosReceipt,pk=receipt_id,order__branch=branch)
-        return Response({'number':row.number,'kind':row.kind,'created_at':row.created_at.isoformat(),'snapshot':row.snapshot})
+        from .receipts import receipt_document
+        return Response(receipt_document(row))
 
 
 class PosSocketTicketView(StaffAPIView):

@@ -138,7 +138,9 @@ class SelfServiceOrderView(APIView):
         order = Order.objects.select_related('branch').filter(pk=data['order_id']).first()
         if not order:
             raise NotFound('Order not found.')
-        response = Response(order_data(order_queryset(order.branch).get(pk=order.pk)))
+        data = order_data(order_queryset(order.branch).get(pk=order.pk))
+        data['tracking_token'] = request.query_params['token']
+        response = Response(data)
         response['Cache-Control'] = 'private, no-store'
         return response
 

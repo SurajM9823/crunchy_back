@@ -330,3 +330,17 @@ workers cannot serve these connections.
   Guest order details require the signed tracking token returned by checkout.
 - Reconnection and changed WebSocket heartbeat revisions refresh REST snapshots.
   There is no recurring REST polling timer for TV or kitchen orders.
+
+## Compact receipts and order tracking
+
+Deploy the receipt API and frontend together. `FRONTEND_BASE_URL` must be the
+public frontend origin; printed receipt QR codes open `/track?token=...` there.
+Configure the frontend host to serve the SPA for `/track` as well as existing
+routes. The tracking page needs the existing public outlet WebSocket connection.
+No database migration is required for this receipt change.
+
+Token slips and bills render the saved receipt snapshot, including outlet and
+seller information. Reprints preserve those saved details. The printed QR grants
+order-status access only; full receipts still require the customer's login,
+the guest checkout capability, or staff outlet permissions. Print at actual size
+on 80 mm paper; confirm the QR scans on the outlet's physical printer before use.
