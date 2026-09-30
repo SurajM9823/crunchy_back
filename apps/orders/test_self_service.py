@@ -32,6 +32,7 @@ class SelfServiceTests(TestCase):
     def test_kiosk_persists_contact_stock_and_exactly_once_order(self):
         first = self.checkout()
         self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(first.data['order_number'], 'K-01')
         again = self.checkout()
         self.assertEqual(first.data, again.data)
         order = Order.objects.get()
@@ -49,6 +50,7 @@ class SelfServiceTests(TestCase):
         body = self.body(order_source='TABLE_QR', fulfillment_type='DINE_IN', qr_token=generate_table_qr_token(self.table))
         first = self.checkout(body)
         self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(first.data['order_number'], 'QR-01')
         second = self.checkout(body, key='round-two')
         self.assertEqual(second.status_code, 201, second.data)
         self.assertEqual(first.data['id'], second.data['id'])

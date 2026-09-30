@@ -27,25 +27,7 @@ from .models import (
     PaymentMethod,
     PaymentStatus,
 )
-
-
-def generate_order_number(branch: Branch) -> str:
-    """
-    Generates a clean human-readable unique order code.
-    Format: <BRANCH_CODE>-YYMMDD-<INCREMENT>
-    Example: CB-KTM-01-260922-0001
-    """
-    now = timezone.now()
-    date_str = now.strftime('%y%m%d')
-    prefix = f"{branch.branch_code}-{date_str}-"
-
-    # Count orders created today for this branch
-    count_today = Order.objects.filter(
-        branch=branch,
-        created_at__date=now.date(),
-    ).count() + 1
-
-    return f"{prefix}{count_today:04d}"
+from .numbering import generate_order_number
 
 
 def broadcast_order_event(order: Order, event_type: str, extra_data: dict = None):
@@ -149,7 +131,7 @@ def order_create_or_append_tab(
         order.subtotal += round_subtotal
     else:
         order = Order(
-            order_number=generate_order_number(branch),
+            order_number=generate_order_number(order_source),
             branch=branch,
             table=table,
             table_session_id=table_session_id,

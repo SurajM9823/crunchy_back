@@ -18,7 +18,8 @@ from apps.catalog.services import (
 from apps.tables.services import table_create
 from apps.tables.qr_security import generate_table_qr_token
 
-from .models import Order, OrderItem, OrderStatus, FulfillmentType, PaymentMethod, PaymentStatus
+from .models import Order, OrderItem, OrderStatus, OrderSource, FulfillmentType, PaymentMethod, PaymentStatus
+from .numbering import generate_order_number
 from .services import order_create_or_append_tab, order_transition_status
 from .selectors import get_kitchen_active_tickets, get_live_tv_pickup_tickets
 
@@ -122,8 +123,14 @@ class CentralizedOrderEngineTests(TestCase):
         self.assertEqual(order.vat_included_amount, Decimal('172.57'))
         self.assertEqual(order.items.count(), 2)
 
-        # Verify Order Number Format: CB-MAIN-01-YYMMDD-0001
-        self.assertTrue(order.order_number.startswith("CB-MAIN-01-"))
+        self.assertEqual(order.order_number, "QR-01")
+
+    def test_order_numbers_are_short_and_sequenced_per_source(self):
+        self.assertEqual(generate_order_number(OrderSource.WEBSITE), 'W-01')
+        self.assertEqual(generate_order_number(OrderSource.KIOSK), 'K-01')
+        self.assertEqual(generate_order_number(OrderSource.TABLE_QR), 'QR-01')
+        self.assertEqual(generate_order_number(OrderSource.POS), 'POS-01')
+        self.assertEqual(generate_order_number(OrderSource.WEBSITE), 'W-02')
 
     def test_kds_kitchen_ticket_separation_rule_2(self):
         # Place order with 1 kitchen item and 1 non-kitchen item

@@ -64,6 +64,7 @@ class PosWorkflowTests(TestCase):
         data={'items':[{'product_id':self.product.pk,'quantity':2}],'expected_total':'400'}
         one=self.post('',data,'retry');two=self.post('',data,'retry')
         self.assertEqual(one.status_code,201,one.data);self.assertEqual(one.data,two.data)
+        self.assertEqual(one.data['order_number'], 'POS-01')
         self.assertEqual(Order.objects.count(),1);self.assertEqual(OrderOutboxEvent.objects.count(),1)
         self.stock.refresh_from_db();self.assertEqual(self.stock.current_stock,18)
         self.assertEqual(StockTransaction.objects.count(),1)

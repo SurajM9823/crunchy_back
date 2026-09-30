@@ -55,7 +55,7 @@ class Order(TimeStampedModel):
         max_length=64,
         unique=True,
         db_index=True,
-        help_text="Human-readable unique order code (e.g. CB-KTM-260922-0001)",
+        help_text="Short channel token (e.g. W-01, K-01, QR-01, or POS-01)",
     )
     is_pos_managed = models.BooleanField(default=False, db_index=True)
     version = models.PositiveIntegerField(default=1)
@@ -279,6 +279,11 @@ class PosSequence(models.Model):
     branch = models.OneToOneField('restaurants.Branch', on_delete=models.CASCADE, primary_key=True)
     order_counter = models.PositiveBigIntegerField(default=0)
     receipt_counter = models.PositiveBigIntegerField(default=0)
+
+
+class OrderTokenSequence(models.Model):
+    source = models.CharField(max_length=32, choices=OrderSource.choices, primary_key=True)
+    counter = models.PositiveBigIntegerField(default=0)
 
 
 class PosMutation(models.Model):

@@ -12,6 +12,7 @@ from apps.restaurants.models import Branch
 from apps.tables.models import DiningTable
 from apps.payments.models import PaymentTransaction
 from .models import Order, OrderItem, OrderItemModifier, OrderStatusHistory, PosSequence, PosMutation, PosReceipt, PosCreditEntry, OrderOutboxEvent
+from .numbering import generate_order_number
 from .pos_access import require_access
 from .pos_selectors import order_queryset, order_data, ACTIVE
 
@@ -205,10 +206,8 @@ def mutate(branch, actor, key, action, data, order_id=None):
             if not data['discount_reason']: raise ValidationError('Enter a discount reason.')
         priced = quote(branch,data)
         if Decimal(priced['total_payable']) != data['expected_total']: raise Conflict('Menu prices changed. Review a fresh quote.')
-        sequence.order_counter += 1
-        sequence.save(update_fields=['order_counter'])
         order = Order.objects.create(branch=branch,is_pos_managed=True,order_source='POS',pricing_policy=pricing_policy(branch),
-            order_number=f'POS-{branch.pk}-{sequence.order_counter:08d}',table=table,table_session_id=uuid.uuid4() if table else None,
+            order_number=generate_order_number('POS'),table=table,table_session_id=uuid.uuid4() if table else None,
             status='ACCEPTED',**{k:data[k] for k in ['customer_name','customer_phone','fulfillment_type','delivery_address','notes','payment_method','discount_reason']},
             **{k:Decimal(priced[k]) for k in ['subtotal','discount_amount','service_charge_amount','cash_round_down_savings','vat_included_amount','total_payable']})
         add_lines(order,data['items'],priced,actor)

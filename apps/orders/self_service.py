@@ -16,6 +16,7 @@ from apps.restaurants.models import Branch
 from apps.tables.models import DiningTable
 from apps.tables.qr_security import verify_and_resolve_qr_token
 from .models import Order, PosSequence, PosMutation, OrderOutboxEvent
+from .numbering import generate_order_number
 from .pos_services import Conflict, totals, pricing_policy, add_lines, audit, receipt
 from .pos_selectors import ACTIVE, order_data, order_queryset
 
@@ -79,10 +80,8 @@ def checkout(data, key):
         order.subtotal += Decimal(priced['subtotal'])
         order.version += 1
     else:
-        sequence.order_counter += 1
-        sequence.save(update_fields=['order_counter'])
         order = Order.objects.create(branch=branch, is_pos_managed=True, order_source=data['order_source'],
-            order_number=f'{data["order_source"]}-{branch.pk}-{sequence.order_counter:08d}',
+            order_number=generate_order_number(data['order_source']),
             table=table, table_session_id=uuid.uuid4() if table else None, fulfillment_type=mode,
             customer_name=data['customer_name'] or 'Guest', customer_phone=data['customer_phone'],
             notes=data['notes'], payment_method='CASH', pricing_policy=pricing_policy(branch), subtotal=priced['subtotal'])

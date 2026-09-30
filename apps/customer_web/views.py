@@ -15,6 +15,7 @@ from rest_framework.views import APIView
 from apps.catalog.models import Product
 from apps.catalog.selectors import quote_items
 from apps.orders.models import Order, PosSequence, OrderOutboxEvent
+from apps.orders.numbering import generate_order_number
 from apps.orders.pos_access import require_access
 from apps.orders.pos_selectors import order_data, order_queryset
 from apps.orders.pos_serializers import PosLineSerializer
@@ -234,8 +235,6 @@ class CheckoutView(CustomerView):
                 if not table or Order.objects.filter(table=table, status__in=ACTIVE).exists():
                     raise ValidationError('Choose an available table or ask the staff about your existing tab.')
             sequence, _ = PosSequence.objects.get_or_create(branch=branch)
-            sequence.order_counter += 1
-            sequence.save(update_fields=['order_counter'])
             policy = pricing_policy(branch)
             policy['customer_tip'] = str(data['tip'])
             delivery_location = data['delivery_location'] if data['fulfillment_type'] == 'DELIVERY' else {}
@@ -243,7 +242,7 @@ class CheckoutView(CustomerView):
             if delivery_location:
                 delivery_address += f'\n{delivery_location["landmark"]}\nhttps://maps.google.com/?q={delivery_location["lat"]},{delivery_location["lng"]}'
             order = Order.objects.create(branch=branch, is_pos_managed=True, order_source='WEBSITE', status='PENDING',
-                order_number=f'WEB-{branch.pk}-{sequence.order_counter:08d}', pricing_policy=policy,
+                order_number=generate_order_number('WEBSITE'), pricing_policy=policy,
                 table=table, table_session_id=uuid.uuid4() if table else None, customer_name=data['customer_name'],
                 customer_phone=request.user.phone_number, fulfillment_type=data['fulfillment_type'],
                 delivery_address=delivery_address, notes=data['notes'], payment_method='FONEPAY',
