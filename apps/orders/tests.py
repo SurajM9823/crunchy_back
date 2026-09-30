@@ -18,7 +18,7 @@ from apps.catalog.services import (
 from apps.tables.services import table_create
 from apps.tables.qr_security import generate_table_qr_token
 
-from .models import Order, OrderItem, OrderStatus, OrderSource, FulfillmentType, PaymentMethod, PaymentStatus
+from .models import Order, OrderItem, OrderStatus, OrderSource, OrderTokenSequence, FulfillmentType, PaymentMethod, PaymentStatus
 from .numbering import generate_order_number
 from .services import order_create_or_append_tab, order_transition_status
 from .selectors import get_kitchen_active_tickets, get_live_tv_pickup_tickets
@@ -131,6 +131,10 @@ class CentralizedOrderEngineTests(TestCase):
         self.assertEqual(generate_order_number(OrderSource.TABLE_QR), 'QR-01')
         self.assertEqual(generate_order_number(OrderSource.POS), 'POS-01')
         self.assertEqual(generate_order_number(OrderSource.WEBSITE), 'W-02')
+
+    def test_order_number_generation_recovers_missing_counter_row(self):
+        OrderTokenSequence.objects.filter(source=OrderSource.WEBSITE).delete()
+        self.assertEqual(generate_order_number(OrderSource.WEBSITE), 'W-01')
 
     def test_kds_kitchen_ticket_separation_rule_2(self):
         # Place order with 1 kitchen item and 1 non-kitchen item
