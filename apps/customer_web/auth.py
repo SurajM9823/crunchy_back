@@ -58,28 +58,28 @@ class CustomerAuthView(APIView):
 
     def post(self, request, action):
         data = request.data
-        if action == 'start':
+        from . import otp
+        if action in ('start', 'recovery-start'):
             phone = phone_number(data.get('phone'))
-            if User.objects.filter(phone_number__in=[phone, phone[4:]]).exists():
+            exists = User.objects.filter(phone_number__in=[phone, phone[4:]]).exists()
+            if action == 'start' and exists:
                 return Response({'exists': True})
-            if not settings.CUSTOMER_DEMO_OTP:
-                raise ValidationError('SMS signup is not configured. Please contact the outlet.')
-            code = f'{secrets.randbelow(10000):04d}'
-            challenge = SignupChallenge.objects.create(phone=phone, code_hash=make_password(code), expires_at=timezone.now()+timedelta(minutes=5))
-            return Response({'exists': False, 'challenge_id': str(challenge.pk), 'demo_code': code, 'expires_in': 300})
-        if action == 'verify':
-            # Persist failed attempts even though the API returns an error.
-            with transaction.atomic():
-                challenge = SignupChallenge.objects.select_for_update().filter(pk=serializers.UUIDField().run_validation(data.get('challenge_id'))).first()
-                valid = challenge and not challenge.consumed and challenge.expires_at > timezone.now() and challenge.attempts < 5
-                if valid:
-                    challenge.attempts += 1
-                    valid = check_password(str(data.get('code', '')), challenge.code_hash)
-                    challenge.verified = bool(valid)
-                    challenge.save()
-            if not valid:
-                raise ValidationError('Invalid or expired code. Request a new code.')
-            return Response({'registration_token': signing.dumps(str(challenge.pk), salt='customer-register')})
+            if action == 'recovery-start' and not User.objects.filter(phone_number__in=[phone, phone[4:]], role='CUSTOMER', is_active=True).exists():
+                raise ValidationError('No active customer account found. Please sign up first.')
+            result = otp.issue(phone, 'SIGNUP' if action == 'start' else 'RECOVERY', data.get('outlet_id'))
+            return Response({'exists': exists, **result})
+        if action in ('verify', 'recovery-verify'):
+            recovery = action == 'recovery-verify'
+            token = otp.verify(data, 'RECOVERY' if recovery else 'SIGNUP')
+            return Response({'reset_token' if recovery else 'registration_token': token})
+        if action == 'reset':
+            return Response(session_data(otp.reset_credentials(data)))
+        if action == 'sms-status':
+            from .models import SmsDelivery
+            row = SmsDelivery.objects.filter(challenge_id=serializers.UUIDField().run_validation(data.get('challenge_id'))).first()
+            if not row:
+                raise ValidationError('Verification request not found.')
+            return Response({'status': row.status})
         if action == 'register':
             serializer = RegistrationInput(data=data)
             serializer.is_valid(raise_exception=True)
@@ -90,7 +90,7 @@ class CustomerAuthView(APIView):
                 raise ValidationError('Signup verification expired.')
             try:
                 with transaction.atomic():
-                    challenge = SignupChallenge.objects.select_for_update().filter(pk=challenge_id, verified=True, consumed=False, expires_at__gt=timezone.now()).first()
+                    challenge = SignupChallenge.objects.select_for_update().filter(pk=challenge_id, purpose='SIGNUP', verified=True, consumed=False, expires_at__gt=timezone.now()).first()
                     if not challenge:
                         raise ValidationError('Request a new signup code.')
                     user = User(username=values['username'], email=values.get('email', '').lower() or None, phone_number=challenge.phone, role='CUSTOMER')

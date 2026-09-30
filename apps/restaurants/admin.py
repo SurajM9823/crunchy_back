@@ -29,11 +29,43 @@ class BranchInline(admin.TabularInline):
     show_change_link = True
 
 
+class RestaurantAdminForm(forms.ModelForm):
+    sms_api_token = forms.CharField(label='Sparrow SMS API Token', required=False,
+        widget=forms.PasswordInput(render_value=False), help_text='Leave blank to keep the saved token.')
+
+    class Meta:
+        model = Restaurant
+        fields = '__all__'
+
+    def clean(self):
+        data = super().clean()
+        from .serializers import OrganizationSerializer
+        payload = {key: value for key, value in data.items() if key.startswith('sms_')}
+        serializer = OrganizationSerializer(self.instance, data=payload, partial=True)
+        if not serializer.is_valid():
+            for field, errors in serializer.errors.items():
+                self.add_error(field if field in self.fields else None, str(errors))
+        else:
+            data.update(serializer.validated_data)
+        return data
+
+    def save(self, commit=True):
+        obj = super().save(commit=False)
+        if self.cleaned_data.get('sms_api_token'):
+            from apps.customer_web.secrets import seal
+            obj.sms_token_encrypted = seal(self.cleaned_data['sms_api_token'])
+        if commit:
+            obj.save()
+            self.save_m2m()
+        return obj
+
+
 @admin.register(Restaurant)
 class RestaurantAdmin(admin.ModelAdmin):
     """
     Superuser Admin interface for managing Restaurant Brands and Franchises.
     """
+    form = RestaurantAdminForm
     list_display = (
         'name',
         'slug',
@@ -51,6 +83,9 @@ class RestaurantAdmin(admin.ModelAdmin):
     ordering = ('name',)
 
     fieldsets = (
+        (_('Sparrow SMS'), {'fields': ('sms_enabled', 'sms_admin_numbers', 'sms_keyword',
+            'sms_shortcode', 'sms_sender', 'sms_api_token', 'sms_public_base_url'),
+            'description': 'Customer verification codes go to the customer mobile. Blank token keeps the saved credential.'}),
         (
             _('Brand Identity'),
             {

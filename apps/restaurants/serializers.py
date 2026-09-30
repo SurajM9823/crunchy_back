@@ -150,6 +150,33 @@ class OrganizationSerializer(serializers.ModelSerializer):
     """
     logo = serializers.ImageField(required=False, allow_null=True)
     logo_url = serializers.CharField(required=False, allow_blank=True)
+    sms_api_token = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=500)
+    sms_token_configured = serializers.SerializerMethodField()
+
+    def get_sms_token_configured(self, obj):
+        return bool(obj.sms_token_encrypted)
+
+    def validate_sms_admin_numbers(self, value):
+        import re
+        from apps.customer_web.auth import phone_number
+        return ','.join(phone_number(number)[4:] for number in re.split(r'[,;\s]+', value.strip()) if number)
+
+    def validate_sms_public_base_url(self, value):
+        from urllib.parse import urlsplit
+        if value:
+            parsed = urlsplit(value)
+            if parsed.scheme != 'https' or parsed.username or parsed.password or parsed.query or parsed.fragment:
+                raise serializers.ValidationError('Use a public HTTPS URL without credentials, query, or fragment.')
+        return value.rstrip('/')
+
+    def validate(self, attrs):
+        current = self.instance
+        if attrs.get('sms_enabled', getattr(current, 'sms_enabled', False)):
+            if not attrs.get('sms_sender', getattr(current, 'sms_sender', '')):
+                raise serializers.ValidationError({'sms_sender': 'Enter the sender identity approved by Sparrow.'})
+            if not (attrs.get('sms_api_token') or getattr(current, 'sms_token_encrypted', '')):
+                raise serializers.ValidationError({'sms_api_token': 'Enter your Sparrow API token before enabling SMS.'})
+        return attrs
 
     class Meta:
         model = Restaurant
@@ -157,6 +184,8 @@ class OrganizationSerializer(serializers.ModelSerializer):
             'id',
             'name',
             'legal_name',
+            'sms_enabled', 'sms_admin_numbers', 'sms_keyword', 'sms_shortcode',
+            'sms_sender', 'sms_api_token', 'sms_token_configured', 'sms_public_base_url',
             'slug',
             'logo',
             'payment_qr',

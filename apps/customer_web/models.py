@@ -1,6 +1,7 @@
 import uuid
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 
 class CustomerProfile(models.Model):
@@ -13,6 +14,10 @@ class CustomerProfile(models.Model):
 
 
 class SignupChallenge(models.Model):
+    purpose = models.CharField(max_length=12, default='SIGNUP')
+    restaurant = models.ForeignKey('restaurants.Restaurant', null=True, on_delete=models.CASCADE)
+    created_at = models.DateTimeField(default=timezone.now)
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     phone = models.CharField(max_length=20, db_index=True)
     code_hash = models.CharField(max_length=128)
@@ -70,3 +75,13 @@ class CustomerOrder(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=['user', 'request_key'], name='customer_checkout_request_unique')]
+
+
+class SmsDelivery(models.Model):
+    challenge = models.OneToOneField(SignupChallenge, on_delete=models.CASCADE)
+    payload_encrypted = models.TextField()
+    status = models.CharField(max_length=12, default='PENDING', db_index=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(db_index=True)
+    last_error = models.CharField(max_length=100, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)

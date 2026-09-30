@@ -326,6 +326,8 @@ def organization_update(
     Enforces multi-tenant isolation and data consistency.
     """
     allowed_fields = {
+        'sms_enabled', 'sms_admin_numbers', 'sms_keyword', 'sms_shortcode',
+        'sms_sender', 'sms_public_base_url',
         'name',
         'legal_name',
         'pan_number',
@@ -355,6 +357,9 @@ def organization_update(
     }
 
     logo_file = fields.get('logo')
+    if fields.get('sms_api_token'):
+        from apps.customer_web.secrets import seal
+        restaurant.sms_token_encrypted = seal(fields['sms_api_token'])
     if logo_file:
         restaurant.logo = logo_file
 

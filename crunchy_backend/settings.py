@@ -59,7 +59,7 @@ INSTALLED_APPS = [
 ]
 
 # Temporary signup only: display a generated test code. Never an existing-account login bypass.
-CUSTOMER_DEMO_OTP = os.getenv('CUSTOMER_DEMO_OTP', 'true').lower() == 'true'
+CUSTOMER_DEMO_OTP = DEBUG and os.getenv('CUSTOMER_DEMO_OTP', 'false').lower() == 'true'
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
@@ -225,6 +225,7 @@ CELERY_TIMEZONE = 'UTC'
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 30 * 60
 CELERY_BEAT_SCHEDULE = {
+    'send-customer-sms': {'task': 'apps.customer_web.tasks.send_pending_sms', 'schedule': 10.0},
     'publish-pos-outbox': {'task': 'apps.orders.tasks.publish_pos_events', 'schedule': 1.0},
     'publish-menu-outbox': {'task': 'apps.catalog.tasks.publish_menu_events', 'schedule': 1.0},
 }

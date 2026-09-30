@@ -7,6 +7,14 @@ from apps.common.models import TimeStampedModel
 
 
 class Restaurant(TimeStampedModel):
+    sms_enabled = models.BooleanField(default=False)
+    sms_admin_numbers = models.CharField(max_length=300, blank=True)
+    sms_keyword = models.CharField(max_length=50, blank=True)
+    sms_shortcode = models.CharField(max_length=20, blank=True)
+    sms_sender = models.CharField(max_length=50, blank=True)
+    sms_token_encrypted = models.TextField(blank=True, editable=False)
+    sms_public_base_url = models.URLField(blank=True)
+
     """
     The Parent Restaurant Brand / Franchise entity.
     All franchise branches/outlets belong to this parent brand.
