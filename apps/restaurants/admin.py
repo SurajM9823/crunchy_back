@@ -1,5 +1,6 @@
 from django import forms
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.core.exceptions import ValidationError
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
 from apps.user_accounts.models import User, UserRole
@@ -291,16 +292,19 @@ class BranchAdmin(admin.ModelAdmin):
 
         # Auto-create new Outlet Admin user if provided
         if new_password and (new_username or new_phone or new_email):
-            new_user = user_create(
-                username=new_username,
-                phone_number=new_phone,
-                email=new_email,
-                password=new_password,
-                role=UserRole.BRANCH_MANAGER,
-                is_staff=True,
-                is_verified=True,
-            )
-            obj.manager = new_user
+            try:
+                new_user = user_create(
+                    username=new_username,
+                    phone_number=new_phone,
+                    email=new_email,
+                    password=new_password,
+                    role=UserRole.BRANCH_MANAGER,
+                    is_staff=True,
+                    is_verified=True,
+                )
+                obj.manager = new_user
+            except ValidationError as error:
+                messages.error(request, f"Could not create Outlet Admin user: {error}")
 
         super().save_model(request, obj, form, change)
 
