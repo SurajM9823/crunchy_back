@@ -27,7 +27,7 @@ def order_data(order, detail=True):
         'variant_name': r.variant_name, 'quantity': r.quantity, 'unit_price': str(r.unit_price), 'line_total': str(r.line_total),
         'requires_kitchen': r.requires_kitchen, 'kitchen_status': r.kitchen_status, 'round_number': r.round_number, 'item_notes': r.item_notes,
         'created_at':r.created_at.isoformat(), 'preparation_started_at':r.preparation_started_at.isoformat() if r.preparation_started_at else None,
-        'can_remove':r.kitchen_status=='WAITING' and not order.billed_at and not order.paid_amount and not order.credit_amount and order.status not in ['OUT_FOR_DELIVERY','COMPLETED','CANCELLED'] and (order.order_source!='WEBSITE' or order.status=='PENDING'),
+        'can_remove':not r.is_voided and not r.preparation_started_at and r.kitchen_status=='WAITING' and not order.billed_at and not order.paid_amount and not order.credit_amount and order.status not in ['OUT_FOR_DELIVERY','COMPLETED','CANCELLED'] and (order.order_source!='WEBSITE' or order.status=='PENDING'),
         'combo_components': r.combo_components, 'is_voided': r.is_voided, 'void_reason': r.void_reason,
         'modifiers': [{'name': m.option_name, 'group': m.group_name, 'price_delta': str(m.price_delta)} for m in r.modifiers.all()]} for r in order.items.all()]
     from .preparation import rounds, append_allowed

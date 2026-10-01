@@ -82,8 +82,12 @@ class SelfServiceTests(TestCase):
     def test_calls_and_transitions_publish_to_all_live_screens(self):
         created = self.checkout().data
         self.client.force_authenticate(self.manager)
+        for version, state in [(1, 'PREPARING'), (2, 'READY')]:
+            prepared = self.client.post(f'/api/v1/orders/pos/{created["id"]}/round/?outlet_id={self.branch.pk}',
+                {'version':version,'round_number':1,'status':state},format='json',HTTP_IDEMPOTENCY_KEY=f'prepare-{version}')
+            self.assertEqual(prepared.status_code,200,prepared.data)
         response = self.client.post(f'/api/v1/orders/pos/{created["id"]}/call/?outlet_id={self.branch.pk}',
-            {'version': 1}, format='json', HTTP_IDEMPOTENCY_KEY='call-once')
+            {'version': 3}, format='json', HTTP_IDEMPOTENCY_KEY='call-once')
         self.assertEqual(response.status_code, 200, response.data)
         with patch('apps.orders.tasks.get_channel_layer') as layer:
             from unittest.mock import AsyncMock

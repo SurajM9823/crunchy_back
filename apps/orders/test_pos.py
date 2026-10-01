@@ -191,7 +191,9 @@ class PosWorkflowTests(TestCase):
         order=self.command(order,'transition',status='READY')
         order=self.command(order,'append',items=[{'product_id':self.product.pk,'quantity':1}],expected_total='400')
         self.assertEqual([r['kitchen_status'] for r in order['items']],['READY','WAITING'])
-        self.command(order,'transition',status='CANCELLED',reason='Cancel new round')
+        rejected=self.post(f'{order["id"]}/transition/',{'version':order['version'],'status':'CANCELLED','reason':'Cancel new round'})
+        self.assertEqual(rejected.status_code,400)
+        self.command(order,'void',item_id=order['items'][1]['id'],reason='Cancel waiting item')
         self.stock.refresh_from_db();self.assertEqual(self.stock.current_stock,19)
 
     def test_bill_snapshot_without_payment_and_table_session_release(self):

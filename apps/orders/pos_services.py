@@ -1,4 +1,3 @@
-from .preparation import append_allowed, sync_status, advance_round, call_round, rounds
 """Atomic staff commands: price authority, concurrency, ledgers and durable events."""
 import hashlib
 import json
@@ -13,6 +12,7 @@ from apps.restaurants.models import Branch
 from apps.tables.models import DiningTable
 from apps.payments.models import PaymentTransaction
 from .models import Order, OrderItem, OrderItemModifier, OrderStatusHistory, PosSequence, PosMutation, PosReceipt, PosCreditEntry, OrderOutboxEvent
+from .preparation import append_allowed, sync_status, advance_round, call_round
 from .numbering import generate_order_number
 from .pos_access import require_access
 from .pos_selectors import order_queryset, order_data, ACTIVE
@@ -155,6 +155,9 @@ def remove_waiting_item(order, data, actor=None):
         row.line_total -= reduction
     row.void_reason = data['reason']
     row.save()
+    remaining = order.items.filter(round_number=row.round_number, is_voided=False)
+    if not remaining.filter(requires_kitchen=True).exists():
+        remaining.filter(kitchen_status='WAITING').update(kitchen_status='READY', ready_at=timezone.now())
     order.subtotal -= reduction
     apply_totals(order)
     if order.status != 'PENDING':
@@ -293,7 +296,7 @@ def mutate(branch, actor, key, action, data, order_id=None):
             if target not in allowed.get(order.status,[]): raise ValidationError('This status transition is not allowed.')
             if target=='OUT_FOR_DELIVERY' and order.fulfillment_type!='DELIVERY': raise ValidationError('Only delivery orders can be dispatched.')
             if target=='CANCELLED':
-                if order.items.filter(is_voided=False, requires_kitchen=True).exclude(kitchen_status='WAITING').exists():
+                if previous == 'OUT_FOR_DELIVERY' or order.items.filter(is_voided=False,kitchen_status='SERVED').exists() or order.items.filter(is_voided=False, requires_kitchen=True).exclude(kitchen_status='WAITING').exists():
                     raise ValidationError('Cooking has started. Remove only waiting items; this order cannot be cancelled.')
                 require_access(actor,branch,'discount')
                 if not data['reason']: raise ValidationError('Enter a cancellation reason.')
@@ -307,6 +310,8 @@ def mutate(branch, actor, key, action, data, order_id=None):
                 order.items.filter(is_voided=False,kitchen_status='WAITING').update(kitchen_status='PREPARING',preparation_started_at=timezone.now())
                 sync_status(order)
             if target=='READY':
+                if not order.items.filter(is_voided=False,kitchen_status='PREPARING').exists():
+                    raise ValidationError('Start a waiting round before marking it ready.')
                 order.items.filter(is_voided=False,kitchen_status='PREPARING').update(kitchen_status='READY',ready_at=timezone.now())
                 sync_status(order)
             if target in ('OUT_FOR_DELIVERY','COMPLETED'):

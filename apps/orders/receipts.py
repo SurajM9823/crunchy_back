@@ -69,7 +69,9 @@ class ReceiptTrackingView(APIView):
         except (signing.BadSignature, ValueError):
             raise NotFound('This order tracking link is invalid.')
         order = get_object_or_404(Order.objects.select_related('branch', 'table'), pk=order_id)
+        from .preparation import rounds
         response = Response({'order_number': order.order_number, 'outlet_id': order.branch_id,
+            'rounds': [{key:value for key,value in row.items() if key != 'item_ids'} for row in rounds(order)],
             'outlet_name': order.branch.name, 'status': order.status, 'fulfillment_type': order.fulfillment_type,
             'table_number': order.table.table_number if order.table_id else None,
             'updated_at': order.updated_at.isoformat(),

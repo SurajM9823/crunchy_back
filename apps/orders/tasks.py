@@ -34,6 +34,8 @@ def publish_pos_events():
                     'order_number':order.order_number,'status':order.status,
                     'fulfillment_type':order.fulfillment_type,
                     'table_number':order.table.table_number if order.table_id else None}
+                envelope['round_number'] = event.payload.get('round_number')
+                envelope['round_status'] = event.payload.get('round_status')
                 async_to_sync(layer.group_send)(f'outlet_{event.branch_id}_kitchen',
                     {'type':'kitchen_ticket_update', **envelope})
                 async_to_sync(layer.group_send)(f'order_{order.pk}', {'type':'order_event', **envelope})

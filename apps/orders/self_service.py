@@ -1,4 +1,3 @@
-from .preparation import append_allowed, sync_status
 """Persist kiosk and signed table-QR orders using the same ledger as staff POS."""
 import hashlib
 import json
@@ -17,6 +16,7 @@ from apps.restaurants.models import Branch
 from apps.tables.models import DiningTable
 from apps.tables.qr_security import verify_and_resolve_qr_token
 from .models import Order, PosSequence, PosMutation, OrderOutboxEvent
+from .preparation import append_allowed, sync_status
 from .numbering import generate_order_number
 from .pos_services import Conflict, totals, pricing_policy, add_lines, audit, receipt
 from .pos_selectors import ACTIVE, order_data, order_queryset
@@ -28,6 +28,8 @@ class CheckoutInput(serializers.Serializer):
     fulfillment_type = serializers.ChoiceField(choices=['DINE_IN', 'TAKEAWAY'])
     table_id = serializers.IntegerField(required=False, allow_null=True)
     qr_token = serializers.CharField(required=False, allow_blank=True, default='')
+    tracking_token = serializers.CharField(required=False, allow_blank=True, default='')
+    version = serializers.IntegerField(required=False, min_value=1)
     customer_name = serializers.CharField(max_length=120, allow_blank=True, default='')
     customer_phone = serializers.CharField(max_length=32, allow_blank=True, default='')
     notes = serializers.CharField(max_length=1000, allow_blank=True, default='')
@@ -70,6 +72,13 @@ def checkout(data, key):
     if data.get('expected_total') != Decimal(totals(branch, priced['subtotal'])['total_payable']):
         raise Conflict('Menu prices changed. Review the current total before submitting again.')
     order = Order.objects.select_for_update().filter(branch=branch, table=table, is_pos_managed=True, status__in=ACTIVE).first() if table else None
+    if data.get('tracking_token'):
+        try:
+            tracked = signing.loads(data['tracking_token'], salt='self-service-order', max_age=7*86400)
+        except signing.BadSignature:
+            raise ValidationError('Order session expired. Scan the table QR again.')
+        if not order or tracked.get('order_id') != order.pk or data.get('version') != order.version:
+            raise Conflict('This table order changed or closed. Review the current order before adding items.')
     # A kiosk cannot attach to another party's running tab just by selecting its table.
     if order and data['order_source'] == 'KIOSK':
         raise Conflict('This table has a running order. Scan its QR code to add items.')
@@ -154,3 +163,61 @@ class SelfServiceTablesView(APIView):
     def get(self, request, outlet_id):
         tables = DiningTable.objects.filter(branch_id=outlet_id, branch__is_active=True, is_active=True)
         return Response({'tables': list(tables.values('id', 'table_number', 'section'))})
+
+
+class SelfServiceVoidInput(serializers.Serializer):
+    tracking_token = serializers.CharField()
+    qr_token = serializers.CharField()
+    version = serializers.IntegerField(min_value=1)
+    item_id = serializers.IntegerField(min_value=1)
+    quantity = serializers.IntegerField(min_value=1, required=False)
+
+
+@transaction.atomic
+def remove_table_item(data, key):
+    from .pos_services import remove_waiting_item
+    if not key or len(key) > 128:
+        raise ValidationError('An Idempotency-Key is required.')
+    try:
+        capability = signing.loads(data['tracking_token'], salt='self-service-order', max_age=7*86400)
+    except signing.BadSignature:
+        raise NotFound('Order session expired.')
+    table = verify_and_resolve_qr_token(data['qr_token'])
+    if not table:
+        raise NotFound('Scan a valid table QR.')
+    branch = Branch.objects.select_for_update().get(pk=table.branch_id)
+    fingerprint = hashlib.sha256(json.dumps(['table-void', data], sort_keys=True).encode()).hexdigest()
+    previous = PosMutation.objects.filter(branch=branch, key=key).first()
+    if previous:
+        if previous.fingerprint != fingerprint:
+            raise Conflict('This request key belongs to another change.')
+        return previous.response
+    order = Order.objects.select_for_update().filter(pk=capability.get('order_id'), branch=branch, table=table, is_pos_managed=True).first()
+    table.refresh_from_db()
+    if not order or not table.active_session_id or table.active_session_id != order.table_session_id:
+        raise NotFound('This table session is closed.')
+    if order.version != data['version']:
+        raise Conflict('The kitchen updated this order. Review its latest state before editing.')
+    old_status = order.status
+    remove_waiting_item(order, {**data,'reason':'Table guest removed waiting item'})
+    order.version += 1
+    order.save()
+    audit(order, None, old_status, f'Table guest removed {data.get("quantity", "all")} from waiting item {data["item_id"]}')
+    sequence, _ = PosSequence.objects.get_or_create(branch=branch)
+    receipt(order, 'TOKEN', sequence)
+    OrderOutboxEvent.objects.create(branch=branch, order=order, event_type='ORDER_VOID', payload={'version':order.version})
+    from apps.catalog.services import menu_changed
+    menu_changed(branch_id=branch.pk)
+    result = order_data(order_queryset(branch).get(pk=order.pk))
+    result['tracking_token'] = data['tracking_token']
+    PosMutation.objects.create(branch=branch, key=key, fingerprint=fingerprint, response=result)
+    return result
+
+
+class SelfServiceVoidView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = SelfServiceVoidInput(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return Response(remove_table_item(serializer.validated_data, request.headers.get('Idempotency-Key')))

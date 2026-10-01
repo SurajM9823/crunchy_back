@@ -44,11 +44,22 @@ class MenuWorkflowTests(TestCase):
     def test_nested_product_and_atomic_failure(self):
         payload = {'category': self.category.pk, 'name': 'Meal', 'base_price': '100', 'main_image_index':0,
             'variants':[{'id':'size-a', 'name':'Regular', 'price':'100', 'is_default':True}],
-            'modifier_groups':[{'id':'group-a', 'name':'Sauce', 'required':True, 'min_selections':1, 'max_selections':1,
-                'options':[{'id':'option-a', 'name':'Hot', 'price_delta':'20', 'is_default':True}]}]}
+            'modifier_groups':[{'id':'group-a', 'name':'Sauce', 'required':True, 'min_selections':1, 'max_selections':2,
+                'options':[{'id':'option-a', 'name':'Hot', 'price_delta':'20'},
+                    {'id':'option-b', 'name':'Garlic', 'price_delta':'15'},
+                    {'id':'option-c', 'name':'Chili', 'price_delta':'10'}]}]}
         res = self.client.post(self.path('products/'), payload, format='json')
         self.assertEqual(res.status_code, 201, res.data)
         pid = res.data['id']
+        self.assertEqual(res.data['modifier_groups'][0]['max_selections'], 2)
+        quote = self.client.post(self.path('quote/'), {'items':[
+            {'product_id':pid, 'quantity':1, 'modifier_option_ids':['option-a', 'option-b']}]}, format='json')
+        self.assertEqual(quote.status_code, 200, quote.data)
+        self.assertEqual(quote.data['subtotal'], '135.00')
+        for option_ids in ([], ['option-a', 'option-b', 'option-c']):
+            invalid_quote = self.client.post(self.path('quote/'), {'items':[
+                {'product_id':pid, 'quantity':1, 'modifier_option_ids':option_ids}]}, format='json')
+            self.assertEqual(invalid_quote.status_code, 400, invalid_quote.data)
         res = self.client.patch(self.path(f'products/{pid}/'), {'name':'Updated', 'modifier_groups':[
             {'name':'Broken', 'min_selections':3, 'max_selections':1, 'options':[]}]}, format='json')
         self.assertEqual(res.status_code, 400)
@@ -56,7 +67,8 @@ class MenuWorkflowTests(TestCase):
         res = self.client.patch(self.path(f'products/{pid}/'), {'name':'Updated'}, format='json')
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.data['variants'][0]['id'], 'size-a')
-        self.assertEqual(res.data['modifier_groups'][0]['options'][0]['id'], 'option-a')
+        self.assertEqual({option['id'] for option in res.data['modifier_groups'][0]['options']},
+            {'option-a', 'option-b', 'option-c'})
 
     def test_tenant_isolation_and_no_cost_leak(self):
         res = self.client.patch(self.path(f'products/{self.foreign.pk}/'), {'name':'Attack'}, format='json')
