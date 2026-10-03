@@ -29,6 +29,17 @@ def phone_number(value):
     return '+' + digits
 
 
+def can_complete_signup(user):
+    # Only credential-free customer records may be claimed after phone verification.
+    return (
+        user.role == 'CUSTOMER' and user.is_active
+        and not user.is_staff and not user.is_superuser
+        and not hasattr(user, 'employee_profile')
+        and not user.has_usable_password()
+        and not CustomerProfile.objects.filter(user=user).exists()
+    )
+
+
 class AuthThrottle(SimpleRateThrottle):
     scope = 'customer_auth'
     rate = '10/min'
@@ -65,7 +76,8 @@ class CustomerAuthView(APIView):
         from . import otp
         if action in ('start', 'recovery-start'):
             phone = phone_number(data.get('phone'))
-            exists = User.objects.filter(phone_number__in=[phone, phone[4:]]).exists()
+            users = list(User.objects.filter(phone_number__in=[phone, phone[4:]]))
+            exists = any(not can_complete_signup(user) for user in users)
             if action == 'start' and exists:
                 return Response({'exists': True})
             if action == 'recovery-start' and not User.objects.filter(phone_number__in=[phone, phone[4:]], role='CUSTOMER', is_active=True).exists():
@@ -97,7 +109,14 @@ class CustomerAuthView(APIView):
                     challenge = SignupChallenge.objects.select_for_update().filter(pk=challenge_id, purpose='SIGNUP', verified=True, consumed=False, expires_at__gt=timezone.now()).first()
                     if not challenge:
                         raise ValidationError('Request a new signup code.')
-                    user = User(username=values['username'], email=values.get('email', '').lower() or None, phone_number=challenge.phone, role='CUSTOMER', restaurant_id=challenge.restaurant_id)
+                    users = list(User.objects.select_for_update().filter(
+                        phone_number__in=[challenge.phone, challenge.phone[4:]]))
+                    if len(users) > 1 or any(not can_complete_signup(user) for user in users):
+                        raise ValidationError('This mobile is already registered. Please log in or recover your account.')
+                    user = users[0] if users else User(role='CUSTOMER', restaurant_id=challenge.restaurant_id)
+                    user.username = values['username']
+                    user.email = values.get('email', '').lower() or None
+                    user.phone_number = challenge.phone
                     try:
                         validate_password(values['password'], user)
                     except DjangoValidationError as error:

@@ -13,7 +13,7 @@ from apps.restaurants.models import Restaurant, Branch
 from apps.catalog.models import Category, Product, ProductVariant
 from apps.orders.models import Order
 from apps.orders.tasks import publish_pos_events
-from .models import CustomerProfile, CustomerOrder
+from .models import CustomerProfile, CustomerOrder, CustomerContact, SignupChallenge
 
 
 @override_settings(CUSTOMER_DEMO_OTP=True, CHANNEL_LAYERS={'default': {'BACKEND':'channels.layers.InMemoryChannelLayer'}})
@@ -79,6 +79,65 @@ class CustomerFlowTests(TestCase):
             response=self.post('auth/login/',{'phone':'9800000011','method':method,'credential':credential})
             self.assertEqual(response.status_code,200,response.data);self.assertIn('refresh',response.data)
         self.assertEqual(self.post('auth/login/',{'phone':'9800000011','method':'PIN','credential':'0000'}).status_code,403)
+
+    def test_guest_phone_can_register_and_then_log_in(self):
+        for stored_phone in ['+9779841234567', '9841234567']:
+            with self.subTest(stored_phone=stored_phone):
+                guest = User.objects.create_user(username='guest', phone_number=stored_phone)
+                self.complete_guest_signup(guest)
+                guest.delete()
+                SignupChallenge.objects.all().delete()
+                cache.clear()
+
+    def complete_guest_signup(self, guest):
+        started = self.post('auth/start/', {'phone':'9841234567'})
+        self.assertEqual(started.status_code, 200, started.data)
+        self.assertFalse(started.data['exists'])
+        verified = self.post('auth/verify/', {'challenge_id':started.data['challenge_id'], 'code':started.data['demo_code']})
+        body = {'registration_token':verified.data['registration_token'], 'username':'registered_guest',
+                'pin':'9274', 'password':'Crisp!River49Ocean'}
+        registered = self.post('auth/register/', body)
+        self.assertEqual(registered.status_code, 201, registered.data)
+        self.assertEqual(User.objects.get(username='registered_guest').pk, guest.pk)
+        guest.refresh_from_db()
+        self.assertEqual(guest.phone_number, '+9779841234567')
+        self.assertEqual(self.post('auth/register/', body).status_code, 400)
+        for method, credential in [('PIN','9274'), ('PASSWORD',body['password'])]:
+            response = self.post('auth/login/', {'phone':'9841234567', 'method':method, 'credential':credential})
+            self.assertEqual(response.status_code, 200, response.data)
+
+    def test_signup_cannot_claim_protected_accounts(self):
+        cases = [
+            {'password':'Existing-secret99'}, {'role':'CASHIER'},
+            {'is_staff':True}, {'is_superuser':True}, {'is_active':False},
+        ]
+        for fields in cases:
+            with self.subTest(fields=fields):
+                user = User.objects.create_user(username='protected', phone_number='9841234567', **fields)
+                self.assertEqual(self.post('auth/start/', {'phone':'9841234567'}).data, {'exists':True})
+                user.delete()
+
+    def test_order_contact_does_not_block_signup(self):
+        contact = CustomerContact.objects.create(branch=self.branch, phone='+9779841234567', sources=['POS','QR','KIOSK'])
+        started = self.post('auth/start/', {'phone':'9841234567'})
+        self.assertEqual(started.status_code, 200, started.data)
+        self.assertFalse(started.data['exists'])
+        self.assertIn('challenge_id', started.data)
+        contact.refresh_from_db()
+        self.assertEqual(contact.sources, ['POS','QR','KIOSK'])
+
+    def test_registration_rechecks_guest_credentials_after_verification(self):
+        guest = User.objects.create_user(username='guest', phone_number='9841234567')
+        started = self.post('auth/start/', {'phone':'9841234567'})
+        verified = self.post('auth/verify/', {'challenge_id':started.data['challenge_id'], 'code':started.data['demo_code']})
+        CustomerProfile.objects.create(user=guest, pin_hash=make_password('4567'))
+        response = self.post('auth/register/', {'registration_token':verified.data['registration_token'],
+            'username':'replacement', 'pin':'9274', 'password':'Crisp!River49Ocean'})
+        self.assertEqual(response.status_code, 400, response.data)
+        guest.refresh_from_db()
+        self.assertEqual(guest.username, 'guest')
+        self.assertTrue(check_password('4567', guest.web_profile.pin_hash))
+        self.assertFalse(SignupChallenge.objects.get(pk=started.data['challenge_id']).consumed)
 
     def test_pin_locks_after_five_failures_but_password_can_log_in(self):
         for _ in range(5):
