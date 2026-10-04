@@ -81,7 +81,7 @@ class CustomerFlowTests(TestCase):
         self.assertEqual(self.post('auth/login/',{'phone':'9800000011','method':'PIN','credential':'0000'}).status_code,403)
 
     def test_guest_phone_can_register_and_then_log_in(self):
-        for stored_phone in ['+9779841234567', '9841234567']:
+        for stored_phone in ['+9779841234567', '9779841234567', '9841234567']:
             with self.subTest(stored_phone=stored_phone):
                 guest = User.objects.create_user(username='guest', phone_number=stored_phone)
                 self.complete_guest_signup(guest)
@@ -130,8 +130,79 @@ class CustomerFlowTests(TestCase):
         for fields in cases:
             with self.subTest(fields=fields):
                 user = User.objects.create_user(username='protected', phone_number='9841234567', **fields)
-                self.assertEqual(self.post('auth/start/', {'phone':'9841234567'}).data, {'exists':True})
+                result = self.post('auth/start/', {'phone':'9841234567'})
+                if fields == {'password':'Existing-secret99'}:
+                    self.assertEqual(result.data, {'exists':True})
+                else:
+                    self.assertEqual(result.status_code, 400, result.data)
+                    self.assertIn(result.data['code'], ['staff_account', 'account_disabled'])
                 user.delete()
+
+    def test_blank_password_guest_can_signup(self):
+        guest = User.objects.create(username='guest', phone_number='9841234567', password='', is_active=False)
+        self.complete_guest_signup(guest)
+
+    def test_recovery_of_guest_or_contact_issues_signup_challenge(self):
+        for kind in ['contact', 'active_guest', 'inactive_guest']:
+            with self.subTest(kind=kind):
+                guest = None
+                if kind == 'contact':
+                    CustomerContact.objects.create(branch=self.branch, phone='+9779841234567', sources=['POS', 'QR', 'KIOSK'])
+                else:
+                    guest = User.objects.create_user(username='guest', phone_number='9779841234567', is_active=kind == 'active_guest')
+                started = self.post('auth/recovery-start/', {'phone':'+9779841234567'})
+                self.assertEqual(started.status_code, 200, started.data)
+                self.assertEqual(started.data['next_action'], 'signup')
+                self.assertEqual(SignupChallenge.objects.get(pk=started.data['challenge_id']).purpose, 'SIGNUP')
+                verified = self.post('auth/verify/', {'challenge_id':started.data['challenge_id'], 'code':started.data['demo_code']})
+                registered = self.post('auth/register/', {'registration_token':verified.data['registration_token'],
+                    'username':'recovered_guest', 'pin':'9274', 'password':'Crisp!River49Ocean'})
+                self.assertEqual(registered.status_code, 201, registered.data)
+                user = User.objects.get(username='recovered_guest')
+                self.assertTrue(user.is_active)
+                if guest:
+                    self.assertEqual(user.pk, guest.pk)
+                user.delete()
+                SignupChallenge.objects.all().delete()
+                cache.clear()
+
+    def test_login_guest_routes_to_signup_and_protected_accounts_do_not_loop(self):
+        guest = User.objects.create_user(username='guest', phone_number='9841234567', is_active=False)
+        response = self.post('auth/login/', {'phone':'9841234567', 'method':'PIN', 'credential':'1234'})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['next_action'], 'signup')
+        guest.set_password('Existing-secret99')
+        guest.save()
+        for action in ['start', 'login', 'recovery-start']:
+            response = self.post('auth/'+action+'/', {'phone':'9841234567'})
+            self.assertEqual(response.status_code, 400, response.data)
+            self.assertEqual(response.data['code'], 'account_disabled')
+
+    def test_duplicate_phone_aliases_are_consistently_rejected(self):
+        User.objects.create_user(username='alias1', phone_number='9841234567')
+        User.objects.create_user(username='alias2', phone_number='+9779841234567')
+        for action in ['start', 'login', 'recovery-start']:
+            response = self.post('auth/'+action+'/', {'phone':'9841234567'})
+            self.assertEqual(response.status_code, 400, response.data)
+            self.assertEqual(response.data['code'], 'account_conflict')
+
+    def test_registration_field_conflicts_do_not_claim_phone_is_registered(self):
+        self.other.email = 'existing@example.com'
+        self.other.save()
+        started = self.post('auth/start/', {'phone':'9841234567'})
+        verified = self.post('auth/verify/', {'challenge_id':started.data['challenge_id'], 'code':started.data['demo_code']})
+        body = {'registration_token':verified.data['registration_token'], 'username':'other',
+                'pin':'9274', 'password':'Crisp!River49Ocean'}
+        response = self.post('auth/register/', body)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('username', response.data)
+        body.update(username='available_name', email='EXISTING@example.com')
+        response = self.post('auth/register/', body)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('email', response.data)
+        body['email'] = ''
+        response = self.post('auth/register/', body)
+        self.assertEqual(response.status_code, 201, response.data)
 
     def test_order_contact_does_not_block_signup(self):
         contact = CustomerContact.objects.create(branch=self.branch, phone='+9779841234567', sources=['POS','QR','KIOSK'])

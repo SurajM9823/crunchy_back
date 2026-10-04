@@ -14,6 +14,7 @@ from apps.restaurants.models import Restaurant, Branch
 from apps.user_accounts.models import User
 from .models import SignupChallenge, SmsDelivery, CustomerProfile
 from .secrets import seal
+from .auth_accounts import resolve_account
 
 
 def issue(phone, purpose, outlet_id=None):
@@ -80,8 +81,8 @@ def reset_credentials(data):
             verified=True, consumed=False, expires_at__gt=timezone.now()).first()
         if not challenge:
             raise ValidationError('Recovery verification expired. Request a new code.')
-        user = User.objects.select_for_update().filter(phone_number__in=[challenge.phone, challenge.phone[4:]], role='CUSTOMER', is_active=True).first()
-        if not user:
+        user, next_action = resolve_account(challenge.phone, lock=True)
+        if not user or next_action != 'login':
             raise ValidationError('Unable to recover this account.')
         try:
             validate_password(values['password'], user)

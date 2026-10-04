@@ -18,6 +18,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from apps.user_accounts.models import User
 from apps.user_accounts.serializers import UserOutputSerializer
 from .models import CustomerProfile, SignupChallenge
+from .auth_accounts import resolve_account
 
 
 def phone_number(value):
@@ -27,18 +28,6 @@ def phone_number(value):
     if not re.fullmatch(r'9779[78]\d{8}', digits):
         raise ValidationError({'phone': 'Enter a valid Nepal mobile number.'})
     return '+' + digits
-
-
-def can_complete_signup(user):
-    # Guest records (including inactive ones) may be activated after phone verification.
-    # Existing credentials and staff access must never be replaced by signup.
-    return (
-        user.role == 'CUSTOMER'
-        and not user.is_staff and not user.is_superuser
-        and not hasattr(user, 'employee_profile')
-        and not user.has_usable_password()
-        and not CustomerProfile.objects.filter(user=user).exists()
-    )
 
 
 class AuthThrottle(SimpleRateThrottle):
@@ -77,14 +66,13 @@ class CustomerAuthView(APIView):
         from . import otp
         if action in ('start', 'recovery-start'):
             phone = phone_number(data.get('phone'))
-            users = list(User.objects.filter(phone_number__in=[phone, phone[4:]]))
-            exists = any(not can_complete_signup(user) for user in users)
+            user, next_action = resolve_account(phone)
+            exists = next_action == 'login'
             if action == 'start' and exists:
                 return Response({'exists': True})
-            if action == 'recovery-start' and not User.objects.filter(phone_number__in=[phone, phone[4:]], role='CUSTOMER', is_active=True).exists():
-                raise ValidationError('No active customer account found. Please sign up first.')
-            result = otp.issue(phone, 'SIGNUP' if action == 'start' else 'RECOVERY', data.get('outlet_id'))
-            return Response({'exists': exists, **result})
+            purpose = 'SIGNUP' if next_action == 'signup' else 'RECOVERY'
+            result = otp.issue(phone, purpose, data.get('outlet_id'))
+            return Response({'exists': exists, 'next_action': 'signup' if purpose == 'SIGNUP' else 'recovery', **result})
         if action in ('verify', 'recovery-verify'):
             recovery = action == 'recovery-verify'
             token = otp.verify(data, 'RECOVERY' if recovery else 'SIGNUP')
@@ -110,11 +98,16 @@ class CustomerAuthView(APIView):
                     challenge = SignupChallenge.objects.select_for_update().filter(pk=challenge_id, purpose='SIGNUP', verified=True, consumed=False, expires_at__gt=timezone.now()).first()
                     if not challenge:
                         raise ValidationError('Request a new signup code.')
-                    users = list(User.objects.select_for_update().filter(
-                        phone_number__in=[challenge.phone, challenge.phone[4:]]))
-                    if len(users) > 1 or any(not can_complete_signup(user) for user in users):
-                        raise ValidationError('This mobile is already registered. Please log in or recover your account.')
-                    user = users[0] if users else User(role='CUSTOMER', restaurant_id=challenge.restaurant_id)
+                    user, next_action = resolve_account(challenge.phone, lock=True)
+                    if next_action != 'signup':
+                        raise ValidationError({'code': 'phone_registered', 'detail':
+                            'This mobile is already registered. Please log in or recover your account.'})
+                    user = user or User(role='CUSTOMER', restaurant_id=challenge.restaurant_id)
+                    others = User.objects.exclude(pk=user.pk) if user.pk else User.objects.all()
+                    if others.filter(username=values['username']).exists():
+                        raise ValidationError({'username': 'This username is taken. Please choose another.'})
+                    if values.get('email') and others.filter(email__iexact=values['email']).exists():
+                        raise ValidationError({'email': 'This email is already registered. Use another email or leave it blank.'})
                     user.username = values['username']
                     user.email = values.get('email', '').lower() or None
                     user.phone_number = challenge.phone
@@ -129,11 +122,14 @@ class CustomerAuthView(APIView):
                     challenge.consumed = True
                     challenge.save(update_fields=['consumed'])
             except IntegrityError:
-                raise ValidationError('This mobile, username, or email is already registered.')
+                raise ValidationError('Account details conflict with an existing account. Please review your details and try again.')
             return Response(session_data(user, data.get('outlet_id')), status=201)
         if action == 'login':
             phone = phone_number(data.get('phone'))
-            user = User.objects.filter(phone_number__in=[phone, phone[4:]], role='CUSTOMER', is_active=True).first()
+            user, next_action = resolve_account(phone)
+            if next_action == 'signup':
+                raise ValidationError({'code': 'signup_required', 'next_action': 'signup', 'detail':
+                    'Verify your mobile number to create or activate your web account.'})
             credential = str(data.get('credential', ''))
             valid = False
             if user and data.get('method') == 'PIN' and re.fullmatch(r'\d{4}', credential):

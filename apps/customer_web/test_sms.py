@@ -57,7 +57,7 @@ class SmsTests(TestCase):
         self.assertEqual(self.post('verify', {'challenge_id':result.data['challenge_id'],'code':code}).status_code, 400)
 
     def test_recovery_is_purpose_bound_and_single_use(self):
-        user = User.objects.create_user(username='customer', phone_number='+9779841234567', role='CUSTOMER', password='Old-secret88')
+        user = User.objects.create_user(username='customer', phone_number='9779841234567', role='CUSTOMER', password='Old-secret88')
         result = self.start('recovery-start')
         code = unseal(SmsDelivery.objects.get().payload_encrypted)
         data = {'challenge_id':result.data['challenge_id'],'code':code}
