@@ -71,7 +71,11 @@ class LiveDisplayConsumer(AsyncWebsocketConsumer):
             def heartbeat():
                 cache.set(f'display:heartbeat:{self.outlet_id}:{self.channel_name}', timezone.now().isoformat(), 90)
                 latest = OrderOutboxEvent.objects.filter(branch_id=self.outlet_id).order_by('-created_at', '-pk').values_list('pk', flat=True).first()
-                return str(latest or '')
+                from apps.loyalty.models import LoyaltyProgram
+                from apps.restaurants.models import Branch
+                restaurant_id = Branch.objects.filter(pk=self.outlet_id).values('restaurant_id')[:1]
+                program_version = LoyaltyProgram.objects.filter(restaurant_id=restaurant_id).values_list('version', flat=True).first()
+                return f'{latest or ""}:{program_version or 0}'
             await self.send(text_data=json.dumps({'event_type': 'HEARTBEAT', 'revision': await heartbeat()}))
 
     async def display_update(self, event):

@@ -306,7 +306,7 @@ def mutate(branch, actor, key, action, data, order_id=None):
             advance_round(order, data['round_number'], data['status'])
         elif action == 'call':
             data['round_number'] = call_round(order, data.get('round_number'))
-        elif action == 'settle':
+        elif action in ('settle', 'bill'):
             if order.status == 'CANCELLED': raise ValidationError('Cancelled orders cannot be settled.')
             frozen = bool(order.billed_at or order.paid_amount or order.credit_amount)
             old_manual = Decimal(order.pricing_policy.get('manual_discount_amount', str(order.discount_amount)))
@@ -326,11 +326,10 @@ def mutate(branch, actor, key, action, data, order_id=None):
             apply_totals(order, None if frozen else requested)
             if order.paid_amount+order.credit_amount>order.total_payable:
                 raise ValidationError('Discount exceeds the unsettled balance.')
-            record_tenders(order,data['tenders'],actor)
-        elif action == 'bill':
-            if order.status == 'CANCELLED': raise ValidationError('A cancelled order cannot be billed.')
-            apply_totals(order)
-            order.billed_at = timezone.now()
+            if action == 'settle':
+                record_tenders(order,data['tenders'],actor)
+            else:
+                order.billed_at = timezone.now()
         elif action == 'transition':
             target=data['status']
             allowed={'PENDING':['ACCEPTED','CANCELLED'],'ACCEPTED':['PREPARING','CANCELLED'], 'PREPARING':['READY','CANCELLED'],

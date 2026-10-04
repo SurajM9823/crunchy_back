@@ -39,6 +39,11 @@ class PosBillQuoteSerializer(VersionSerializer):
     customer_phone = serializers.CharField(max_length=32, allow_blank=True, required=False)
     discount_amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0, required=False)
 
+class PosBillSerializer(PosBillQuoteSerializer):
+    customer_name = serializers.CharField(max_length=120, allow_blank=True, required=False)
+    discount_reason = serializers.CharField(max_length=255, allow_blank=True, default='')
+
+
 class PosAppendSerializer(VersionSerializer):
     items = PosLineSerializer(many=True, allow_empty=False, max_length=100)
     expected_total = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0)

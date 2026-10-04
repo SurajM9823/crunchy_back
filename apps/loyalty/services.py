@@ -29,7 +29,7 @@ def offer(branch, phone, subtotal, exclude_order=None):
         return None
     amount = (Decimal(subtotal) * Decimal(tier['percent']) / 100).quantize(Decimal('.01'), rounding=ROUND_HALF_UP)
     return {'name': tier['name'], 'percent': tier['percent'], 'threshold': tier['threshold'],
-            'amount': str(amount), 'qualifying_spend': str(spent), 'phone': phone}
+            'amount': str(amount)}
 
 
 def discount(branch, phone, subtotal, manual=ZERO, exclude_order=None, saved=None):
@@ -58,3 +58,17 @@ def record_purchase(order):
         tip = Decimal((order.pricing_policy or {}).get('customer_tip', '0'))
         amount = max(ZERO, order.total_payable - order.refunded_amount - tip)
     LoyaltyPurchase.objects.update_or_create(order=order, defaults={'customer': customer, 'amount': amount})
+
+
+@transaction.atomic
+def save_program(branch, values):
+    from apps.restaurants.models import Restaurant
+    from apps.orders.pos_services import Conflict
+    Restaurant.objects.select_for_update().get(pk=branch.restaurant_id)
+    program, _ = LoyaltyProgram.objects.get_or_create(restaurant_id=branch.restaurant_id)
+    if values['version'] != program.version:
+        raise Conflict('Loyalty rules changed. Reload them before saving.')
+    program.enabled, program.tiers = values['enabled'], values['tiers']
+    program.version += 1
+    program.save()
+    return program

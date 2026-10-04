@@ -110,5 +110,14 @@ class SelfServiceTests(TestCase):
         self.client.force_authenticate(None)
         resolved = self.client.get('/api/v1/tables/qr/resolve/', {'token': query['token'][0]})
         self.assertEqual(resolved.data['table_id'], self.table.pk)
+        self.assertNotIn('tracking_token', resolved.data)
+        created = self.checkout(self.body(
+            order_source='TABLE_QR',
+            fulfillment_type='DINE_IN',
+            qr_token=query['token'][0],
+        ))
+        self.assertEqual(created.status_code, 201, created.data)
+        resolved = self.client.get('/api/v1/tables/qr/resolve/', {'token': query['token'][0]})
+        self.assertEqual(resolved.data['tracking_token'], created.data['tracking_token'])
         self.client.force_authenticate(self.manager)
         self.assertEqual(self.client.get(f'/api/v1/tables/{self.table.pk}/qr/?outlet_id={self.other.pk}').status_code, 403)
