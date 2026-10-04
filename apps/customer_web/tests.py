@@ -89,6 +89,21 @@ class CustomerFlowTests(TestCase):
                 SignupChallenge.objects.all().delete()
                 cache.clear()
 
+    def test_inactive_guest_can_activate_via_verified_signup(self):
+        guest = User.objects.create_user(username='guest', phone_number='9841234567', is_active=False)
+        self.complete_guest_signup(guest)
+        guest.refresh_from_db()
+        self.assertTrue(guest.is_active)
+
+    def test_start_does_not_activate_guest_before_verification(self):
+        guest = User.objects.create_user(username='guest', phone_number='9841234567', is_active=False)
+        started = self.post('auth/start/', {'phone':'9841234567'})
+        self.assertEqual(started.status_code, 200, started.data)
+        self.assertFalse(started.data['exists'])
+        guest.refresh_from_db()
+        self.assertFalse(guest.is_active)
+        self.assertFalse(guest.has_usable_password())
+
     def complete_guest_signup(self, guest):
         started = self.post('auth/start/', {'phone':'9841234567'})
         self.assertEqual(started.status_code, 200, started.data)
@@ -109,7 +124,8 @@ class CustomerFlowTests(TestCase):
     def test_signup_cannot_claim_protected_accounts(self):
         cases = [
             {'password':'Existing-secret99'}, {'role':'CASHIER'},
-            {'is_staff':True}, {'is_superuser':True}, {'is_active':False},
+            {'is_staff':True}, {'is_superuser':True},
+            {'is_active':False, 'password':'Existing-secret99'},
         ]
         for fields in cases:
             with self.subTest(fields=fields):

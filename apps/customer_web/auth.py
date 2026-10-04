@@ -30,9 +30,10 @@ def phone_number(value):
 
 
 def can_complete_signup(user):
-    # Only credential-free customer records may be claimed after phone verification.
+    # Guest records (including inactive ones) may be activated after phone verification.
+    # Existing credentials and staff access must never be replaced by signup.
     return (
-        user.role == 'CUSTOMER' and user.is_active
+        user.role == 'CUSTOMER'
         and not user.is_staff and not user.is_superuser
         and not hasattr(user, 'employee_profile')
         and not user.has_usable_password()
@@ -117,6 +118,7 @@ class CustomerAuthView(APIView):
                     user.username = values['username']
                     user.email = values.get('email', '').lower() or None
                     user.phone_number = challenge.phone
+                    user.is_active = True
                     try:
                         validate_password(values['password'], user)
                     except DjangoValidationError as error:
