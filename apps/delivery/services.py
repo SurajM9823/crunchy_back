@@ -128,6 +128,9 @@ def assign_rider_to_delivery(
     rider.status = RiderStatus.BUSY
     rider.save(update_fields=['status', 'updated_at'])
 
+    from apps.orders.services import broadcast_order_event
+    broadcast_order_event(dispatch.order, 'RIDER_ASSIGNED')
+
     # Real-Time WebSocket broadcast
     channel_layer = get_channel_layer()
     if channel_layer:
@@ -204,6 +207,9 @@ def rider_update_dispatch_status(
             rider.save(update_fields=['status', 'updated_at'])
 
     dispatch.save()
+
+    from apps.orders.services import broadcast_order_event
+    broadcast_order_event(order, 'DELIVERY_STATUS_CHANGED')
 
     # WebSocket Broadcast (Zero Page Reload)
     channel_layer = get_channel_layer()

@@ -125,6 +125,10 @@ def order_settle_payment(
         notes=f"Order settled via {payment_method}. Invoice: {invoice.invoice_number}",
     )
 
+    # Persist the notification with the payment so all customer streams update after commit.
+    from apps.orders.services import broadcast_order_event
+    broadcast_order_event(order, 'PAYMENT_SETTLED')
+
     # 7. Real-Time WebSocket Broadcast (Zero Page Reload)
     channel_layer = get_channel_layer()
     if channel_layer:

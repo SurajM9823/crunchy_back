@@ -98,3 +98,59 @@ class ReceiptTests(TestCase):
         self.assertEqual(receipt_document(bill)['tracking_url'], receipt_document(self.receipt)['tracking_url'])
         self.assertEqual(bill.snapshot['paid_amount'], '200.00')
         self.assertEqual(bill.snapshot['due_amount'], '0')
+
+
+    def assert_customer_event_published(self, event_type):
+        from unittest.mock import AsyncMock, patch
+        from .tasks import publish_pos_events
+        from .models import OrderOutboxEvent
+        CustomerOrder.objects.get_or_create(order=self.order, defaults={'user': self.manager, 'request_key': 'live-test'})
+        event = OrderOutboxEvent.objects.get(order=self.order, event_type=event_type)
+        with patch('apps.orders.tasks.get_channel_layer') as layer:
+            layer.return_value.group_send = AsyncMock()
+            publish_pos_events()
+        calls = layer.return_value.group_send.call_args_list
+        self.assertTrue(any(call.args[0] == f'customer_orders_{self.manager.pk}' for call in calls))
+        self.assertTrue(any(call.args[0] == f'outlet_{self.branch.pk}_display'
+                            and call.args[1]['event_type'] == event_type for call in calls))
+        event.refresh_from_db()
+        self.assertIsNotNone(event.published_at)
+
+    def test_payment_publishes_to_customer_and_receipt_tracking(self):
+        from apps.payments.services import order_settle_payment
+        self.order.is_pos_managed = False
+        self.order.save(update_fields=['is_pos_managed'])
+        order_settle_payment(self.order, 'CASH', idempotency_key='live-payment')
+        self.assert_customer_event_published('PAYMENT_SETTLED')
+
+    def test_delivery_publishes_to_customer_and_receipt_tracking(self):
+        from apps.delivery.models import DeliveryDispatch
+        from apps.delivery.services import rider_update_dispatch_status
+        dispatch = DeliveryDispatch.objects.create(order=self.order, branch=self.branch,
+            dispatch_id='live-dispatch', delivery_address='Customer address')
+        rider_update_dispatch_status(dispatch, 'PICKED_UP')
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, 'OUT_FOR_DELIVERY')
+        self.assert_customer_event_published('DELIVERY_STATUS_CHANGED')
+
+
+    def test_customer_heartbeat_detects_changes_without_version_increment(self):
+        from apps.customer_web.consumers import CustomerOrdersConsumer
+        from apps.delivery.models import DeliveryDispatch
+        CustomerOrder.objects.create(order=self.order, user=self.manager, request_key='revision-test')
+        consumer = CustomerOrdersConsumer()
+        consumer.user_id = self.manager.pk
+        from asgiref.sync import async_to_sync
+        revision = async_to_sync(consumer.revision)
+        initial = revision()
+        self.order.status = 'READY'
+        self.order.save(update_fields=['status', 'updated_at'])
+        changed = revision()
+        self.assertNotEqual(initial, changed)
+        dispatch = DeliveryDispatch.objects.create(order=self.order, branch=self.branch,
+            dispatch_id='revision-dispatch', delivery_address='Customer address')
+        assigned = revision()
+        self.assertNotEqual(changed, assigned)
+        dispatch.status = 'ARRIVED'
+        dispatch.save(update_fields=['status', 'updated_at'])
+        self.assertNotEqual(assigned, revision())

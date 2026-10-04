@@ -47,7 +47,8 @@ class CustomerOrdersConsumer(AsyncJsonWebsocketConsumer):
 
     @database_sync_to_async
     def revision(self):
-        rows = list(CustomerOrder.objects.filter(user_id=self.user_id).order_by('order_id').values_list('order_id','order__version'))
+        rows = list(CustomerOrder.objects.filter(user_id=self.user_id).order_by('order_id').values_list('order_id','order__version','order__updated_at',
+            'order__delivery_dispatch__updated_at'))
         return hashlib.sha256(repr(rows).encode()).hexdigest()
 
     async def receive_json(self, content, **kwargs):
