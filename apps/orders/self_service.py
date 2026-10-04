@@ -18,7 +18,7 @@ from apps.tables.qr_security import verify_and_resolve_qr_token
 from .models import Order, PosSequence, PosMutation, OrderOutboxEvent
 from .preparation import append_allowed, sync_status
 from .numbering import generate_order_number
-from .pos_services import Conflict, totals, pricing_policy, add_lines, audit, receipt
+from .pos_services import Conflict, totals, pricing_policy, add_lines, audit, receipt, priced_totals, apply_totals
 from .pos_selectors import ACTIVE, order_data, order_queryset
 
 
@@ -69,7 +69,7 @@ def checkout(data, key):
         if not table:
             raise ValidationError('Select an active table.')
     priced = quote_items(branch, data['items'], 'kiosk' if data['order_source'] == 'KIOSK' else 'qr')
-    if data.get('expected_total') != Decimal(totals(branch, priced['subtotal'])['total_payable']):
+    if data.get('expected_total') != Decimal(priced_totals(branch, priced['subtotal'], data['customer_phone'])['total_payable']):
         raise Conflict('Menu prices changed. Review the current total before submitting again.')
     order = Order.objects.select_for_update().filter(branch=branch, table=table, is_pos_managed=True, status__in=ACTIVE).first() if table else None
     if data.get('tracking_token'):
@@ -102,8 +102,7 @@ def checkout(data, key):
             table.save(update_fields=['active_session_id', 'updated_at'])
     add_lines(order, data['items'], priced, None)
     sync_status(order)
-    for field, value in totals(branch, order.subtotal, order.discount_amount, order.payment_method, order.pricing_policy).items():
-        setattr(order, field, Decimal(value))
+    apply_totals(order)
     order.save()
     audit(order, None, old_status, 'Self-service additional round' if old_status else 'Self-service order placed; payment due at counter')
     receipt(order, 'TOKEN', sequence)
@@ -136,7 +135,7 @@ class SelfServiceQuoteView(APIView):
         if not branch:
             raise NotFound('Outlet not found.')
         quoted = quote_items(branch, data['items'], 'kiosk' if data['order_source'] == 'KIOSK' else 'qr')
-        return Response(totals(branch, quoted['subtotal']))
+        return Response(priced_totals(branch, quoted['subtotal'], data['customer_phone']))
 
 
 class SelfServiceOrderView(APIView):

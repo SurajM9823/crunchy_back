@@ -23,6 +23,8 @@ def order_data(order, detail=True):
                 created_at=order.created_at.isoformat(), updated_at=order.updated_at.isoformat(), settlement=settlement,
                 due_amount=str(due), unallocated_due=str(max(Decimal('0'), due-order.credit_amount)), table_id=order.table_id,
                 table_number=order.table.table_number if order.table_id else None, discount_reason=order.discount_reason)
+    data['loyalty'] = (order.pricing_policy or {}).get('loyalty')
+    data['manual_discount_amount'] = (order.pricing_policy or {}).get('manual_discount_amount', str(order.discount_amount))
     data['items'] = [{'id': r.pk, 'product_id': r.product_id, 'product_name': r.product_name, 'variant_id': r.variant_id,
         'variant_name': r.variant_name, 'quantity': r.quantity, 'unit_price': str(r.unit_price), 'line_total': str(r.line_total),
         'requires_kitchen': r.requires_kitchen, 'kitchen_status': r.kitchen_status, 'round_number': r.round_number, 'item_notes': r.item_notes,

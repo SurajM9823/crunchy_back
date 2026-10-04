@@ -9,6 +9,7 @@ from django.conf.urls.static import static
 from apps.restaurants.views import OrganizationAPIView
 
 urlpatterns = [
+    path('api/v1/loyalty/', include('apps.loyalty.urls')),
     path('api/v1/customer/', include('apps.customer_web.urls')),
     path('django-admin/', admin.site.urls),
     # Direct access to superuser authentication portal and account management

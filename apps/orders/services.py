@@ -147,8 +147,16 @@ def order_create_or_append_tab(
             subtotal=round_subtotal,
         )
 
+    # Apply the same phone-based loyalty to legacy order entry.
+    from apps.loyalty.services import discount
+    manual = Decimal(order.pricing_policy.get('manual_discount_amount', str(order.discount_amount)))
+    order.discount_amount, reward = discount(branch, order.customer_phone, order.subtotal, manual, order.pk)
+    order.pricing_policy = {**order.pricing_policy, 'manual_discount_amount': str(manual), 'loyalty': reward}
+    if reward:
+        order.discount_reason = f"Loyalty: {reward['name']} ({reward['percent']}%)"
+
     # 5. Compute Statutory 13% Tax-Inclusive VAT & Cash Rounding
-    vat_data = calculate_vat_breakdown(order.subtotal)
+    vat_data = calculate_vat_breakdown(order.subtotal - order.discount_amount)
     order.vat_included_amount = vat_data['vat_amount']
 
     net_payable = max(Decimal('0.00'), order.subtotal - order.discount_amount)

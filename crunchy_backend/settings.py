@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     'apps.inventory',
     'apps.delivery',
     'apps.customer_web',
+    'apps.loyalty',
 ]
 
 # Temporary signup only: display a generated test code. Never an existing-account login bypass.

@@ -14,6 +14,7 @@ class TenderSerializer(serializers.Serializer):
     reference = serializers.CharField(max_length=128, allow_blank=True, default='')
 
 class PosQuoteSerializer(serializers.Serializer):
+    customer_phone = serializers.CharField(max_length=32, allow_blank=True, default='')
     order_id = serializers.IntegerField(min_value=1, required=False)
     items = PosLineSerializer(many=True, allow_empty=False, max_length=100)
     discount_amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0, default=0)
@@ -35,6 +36,7 @@ class VersionSerializer(serializers.Serializer):
 
 
 class PosBillQuoteSerializer(VersionSerializer):
+    customer_phone = serializers.CharField(max_length=32, allow_blank=True, required=False)
     discount_amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0, required=False)
 
 class PosAppendSerializer(VersionSerializer):

@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from apps.tables.models import DiningTable, TableGroup
 from .pos_access import staff_branch, can_access, require_access
 from .pos_selectors import list_orders, order_queryset, order_data
-from .pos_services import quote, mutate, totals
+from .pos_services import quote, mutate, totals, order_totals
 from decimal import Decimal
 from .pos_serializers import (PosListSerializer, PosQuoteSerializer, PosCreateSerializer, PosAppendSerializer,
     PosSettleSerializer, PosTransitionSerializer, PosVoidSerializer, PosRefundSerializer, VersionSerializer, PosBillQuoteSerializer, PosRoundSerializer, PosCallSerializer)
@@ -46,7 +46,7 @@ class PosQuoteView(StaffAPIView):
         result=quote(branch,serializer.validated_data)
         if serializer.validated_data.get('order_id'):
             order=get_object_or_404(order_queryset(branch),pk=serializer.validated_data['order_id'])
-            result.update(totals(branch,order.subtotal+Decimal(result['subtotal']),order.discount_amount,order.payment_method,order.pricing_policy))
+            result.update(order_totals(order, subtotal=order.subtotal+Decimal(result['subtotal'])))
             result['order_version']=order.version
         return Response(result)
 
@@ -89,9 +89,15 @@ class PosBillQuoteView(StaffAPIView):
         order=get_object_or_404(order_queryset(branch),pk=order_id)
         from .pos_services import Conflict
         if order.version!=serializer.validated_data['version']: raise Conflict()
-        discount=serializer.validated_data.get('discount_amount',order.discount_amount)
-        if discount!=order.discount_amount: require_access(request.user,branch,'discount')
-        result=totals(branch,order.subtotal,discount,order.payment_method,order.pricing_policy)
+        old_manual = Decimal(order.pricing_policy.get('manual_discount_amount', str(order.discount_amount)))
+        discount = serializer.validated_data.get('discount_amount', old_manual)
+        if discount != old_manual: require_access(request.user,branch,'discount')
+        if order.billed_at or order.paid_amount or order.credit_amount:
+            if discount not in (old_manual, order.discount_amount):
+                raise Conflict('This bill is already locked.')
+            result = order_totals(order)
+        else:
+            result = order_totals(order, manual=discount, phone=serializer.validated_data.get('customer_phone'))
         result['due_amount']=str(Decimal(result['total_payable'])-order.paid_amount)
         return Response(result)
 

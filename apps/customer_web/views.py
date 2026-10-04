@@ -163,14 +163,15 @@ class CheckoutInput(serializers.Serializer):
         return data
 
 
-def customer_quote(branch, data):
+def customer_quote(branch, data, phone=''):
     if not branch.accepting_orders:
         raise ValidationError('This outlet is not accepting orders.')
     mode_field = {'DELIVERY':'enable_delivery','TAKEAWAY':'enable_takeaway','DRIVE_THRU':'enable_drive_thru','DINE_IN':'enable_dine_in'}[data['fulfillment_type']]
     if not getattr(branch, mode_field):
         raise ValidationError('This fulfillment method is unavailable at this outlet.')
     priced = quote_items(branch, data['items'], 'web')
-    result = {**priced, **totals(branch, priced['subtotal'], method='FONEPAY')}
+    from apps.orders.pos_services import priced_totals
+    result = {**priced, **priced_totals(branch, priced['subtotal'], phone=phone, method='FONEPAY')}
     result['tip'] = str(data['tip'])
     result['total_payable'] = str(Decimal(result['total_payable']) + data['tip'])
     return result
@@ -181,7 +182,7 @@ class QuoteView(CustomerView):
         serializer = CheckoutInput(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        return Response(customer_quote(branch_for(request, data), data))
+        return Response(customer_quote(branch_for(request, data), data, request.user.phone_number))
 
 
 def customer_order_data(link):
@@ -222,7 +223,7 @@ class CheckoutView(CustomerView):
             Branch.objects.select_for_update().get(pk=branch.pk)
             if not branch.restaurant.payment_qr:
                 raise ValidationError('The outlet has not configured its payment QR yet.')
-            priced = customer_quote(branch, data)
+            priced = customer_quote(branch, data, request.user.phone_number)
             if data.get('expected_total') != Decimal(priced['total_payable']):
                 raise Conflict('The total changed. Review the updated amount before submitting.')
             if data['fulfillment_type'] == 'DELIVERY' and not data['delivery_address'].strip():
@@ -237,6 +238,8 @@ class CheckoutView(CustomerView):
             sequence, _ = PosSequence.objects.get_or_create(branch=branch)
             policy = pricing_policy(branch)
             policy['customer_tip'] = str(data['tip'])
+            policy['loyalty'] = priced['loyalty']
+            policy['manual_discount_amount'] = '0.00'
             delivery_location = data['delivery_location'] if data['fulfillment_type'] == 'DELIVERY' else {}
             delivery_address = data['delivery_address']
             if delivery_location:
@@ -247,6 +250,9 @@ class CheckoutView(CustomerView):
                 customer_phone=request.user.phone_number, fulfillment_type=data['fulfillment_type'],
                 delivery_address=delivery_address, notes=data['notes'], payment_method='FONEPAY',
                 **{field: Decimal(priced[field]) for field in ['subtotal','total_payable','discount_amount','service_charge_amount','vat_included_amount','cash_round_down_savings']})
+            if priced['loyalty']:
+                order.discount_reason = f"Loyalty: {priced['loyalty']['name']} ({priced['loyalty']['percent']}%)"
+                order.save(update_fields=['discount_reason'])
             add_lines(order, data['items'], priced, request.user)
             if table:
                 table.active_session_id = order.table_session_id

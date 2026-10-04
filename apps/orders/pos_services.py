@@ -51,15 +51,47 @@ def totals(branch, subtotal, discount=0, method='CASH', policy=None):
         cash_round_down_savings=savings, vat_included_amount=vat, total_payable=total).items()}
 
 
+def priced_totals(branch, subtotal, phone='', manual=0, method='CASH', policy=None, order_id=None, frozen=False):
+    from apps.loyalty.services import discount
+    policy = policy or pricing_policy(branch)
+    if frozen:
+        effective, reward = Decimal(manual), policy.get('loyalty')
+    else:
+        effective, reward = discount(branch, phone, subtotal, manual, order_id)
+    return {**totals(branch, subtotal, effective, method, policy), 'loyalty': reward,
+            'manual_discount_amount': str(manual)}
+
+
 def quote(branch, data):
     result = quote_items(branch, data['items'], 'pos')
-    result.update(totals(branch, result['subtotal'], data.get('discount_amount',0), data.get('payment_method','CASH')))
+    result.update(priced_totals(branch, result['subtotal'], data.get('customer_phone', ''),
+        data.get('discount_amount', 0), data.get('payment_method', 'CASH')))
     return result
 
 
-def apply_totals(order):
-    for key,value in totals(order.branch, order.subtotal, order.discount_amount, order.payment_method,order.pricing_policy).items():
-        setattr(order,key,Decimal(value))
+def order_totals(order, manual=None, phone=None, subtotal=None):
+    frozen = bool(order.billed_at or order.paid_amount or order.credit_amount or order.order_source == 'WEBSITE')
+    if frozen:
+        manual = order.discount_amount
+    elif manual is None:
+        manual = Decimal(order.pricing_policy.get('manual_discount_amount', str(order.discount_amount)))
+    return priced_totals(order.branch, subtotal if subtotal is not None else order.subtotal,
+        phone if phone is not None else order.customer_phone, manual, order.payment_method,
+        order.pricing_policy, order.pk, frozen)
+
+
+def apply_totals(order, manual=None):
+    result = order_totals(order, manual)
+    for key, value in result.items():
+        if key not in ('loyalty', 'manual_discount_amount'):
+            setattr(order, key, Decimal(value))
+    if not (order.billed_at or order.paid_amount or order.credit_amount or order.order_source == 'WEBSITE'):
+        order.pricing_policy = {**order.pricing_policy, 'loyalty': result['loyalty'],
+                                'manual_discount_amount': result['manual_discount_amount']}
+        if result['loyalty']:
+            order.discount_reason = f"Loyalty: {result['loyalty']['name']} ({result['loyalty']['percent']}%)"
+        elif order.discount_reason.startswith('Loyalty:'):
+            order.discount_reason = ''
     order.payment_status = 'PAID' if order.paid_amount >= order.total_payable else 'UNPAID'
 
 
@@ -243,10 +275,12 @@ def mutate(branch, actor, key, action, data, order_id=None):
             if not data['discount_reason']: raise ValidationError('Enter a discount reason.')
         priced = quote(branch,data)
         if Decimal(priced['total_payable']) != data['expected_total']: raise Conflict('Menu prices changed. Review a fresh quote.')
-        order = Order.objects.create(branch=branch,is_pos_managed=True,order_source='POS',pricing_policy=pricing_policy(branch),
+        order = Order.objects.create(branch=branch,is_pos_managed=True,order_source='POS',pricing_policy={**pricing_policy(branch), 'loyalty': priced['loyalty'], 'manual_discount_amount': str(data['discount_amount'])},
             order_number=generate_order_number('POS'),table=table,table_session_id=uuid.uuid4() if table else None,
             status='ACCEPTED',**{k:data[k] for k in ['customer_name','customer_phone','fulfillment_type','delivery_address','notes','payment_method','discount_reason']},
             **{k:Decimal(priced[k]) for k in ['subtotal','discount_amount','service_charge_amount','cash_round_down_savings','vat_included_amount','total_payable']})
+        if priced.get('loyalty'):
+            order.discount_reason = f"Loyalty: {priced['loyalty']['name']} ({priced['loyalty']['percent']}%)"
         add_lines(order,data['items'],priced,actor)
         if table:
             table.active_session_id = order.table_session_id
@@ -274,20 +308,28 @@ def mutate(branch, actor, key, action, data, order_id=None):
             data['round_number'] = call_round(order, data.get('round_number'))
         elif action == 'settle':
             if order.status == 'CANCELLED': raise ValidationError('Cancelled orders cannot be settled.')
-            if 'discount_amount' in data and data['discount_amount'] != order.discount_amount:
+            frozen = bool(order.billed_at or order.paid_amount or order.credit_amount)
+            old_manual = Decimal(order.pricing_policy.get('manual_discount_amount', str(order.discount_amount)))
+            requested = data.get('discount_amount', old_manual)
+            if frozen:
+                if requested not in (old_manual, order.discount_amount):
+                    raise ValidationError('A billed or partially paid order cannot be discounted again.')
+            elif requested != old_manual:
                 require_access(actor,branch,'discount')
-                if order.billed_at: raise ValidationError('A billed order cannot be discounted again.')
                 if not data['discount_reason']: raise ValidationError('Enter a discount reason.')
-                order.discount_amount=data['discount_amount']; order.discount_reason=data['discount_reason']
-                apply_totals(order)
-                if order.paid_amount+order.credit_amount>order.total_payable: raise ValidationError('Discount exceeds the unsettled balance.')
+                order.discount_reason = data['discount_reason']
             for field in ['customer_name','customer_phone']:
                 if field in data:
-                    if order.credit_amount and data[field] != getattr(order,field): raise ValidationError('Customer cannot be changed on an existing Khata balance.')
+                    if frozen and data[field] != getattr(order,field):
+                        raise ValidationError('Customer cannot be changed after billing or payment.')
                     setattr(order,field,data[field])
+            apply_totals(order, None if frozen else requested)
+            if order.paid_amount+order.credit_amount>order.total_payable:
+                raise ValidationError('Discount exceeds the unsettled balance.')
             record_tenders(order,data['tenders'],actor)
         elif action == 'bill':
             if order.status == 'CANCELLED': raise ValidationError('A cancelled order cannot be billed.')
+            apply_totals(order)
             order.billed_at = timezone.now()
         elif action == 'transition':
             target=data['status']
