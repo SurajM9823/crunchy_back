@@ -3,9 +3,12 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.core.exceptions import ValidationError
+from django.core import signing
 
 from apps.restaurants.permissions import IsOutletAdminOrStaff, IsOutletAdminOnly
 from apps.restaurants.models import Branch
+from apps.orders.models import Order
+from apps.orders.pos_selectors import ACTIVE
 from .models import DiningTable
 from .selectors import list_tables_by_branch, get_table_by_id
 from .services import table_create, table_update, table_regenerate_qr_salt
@@ -124,5 +127,18 @@ class TableQRResolveAPIView(APIView):
             )
 
         serializer = TableQRResolvedContextSerializer(table)
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
+        data = serializer.data
+        if table.active_session_id:
+            order = Order.objects.filter(
+                branch_id=table.branch_id,
+                table_id=table.pk,
+                table_session_id=table.active_session_id,
+                is_pos_managed=True,
+                status__in=ACTIVE,
+            ).only('pk').first()
+            if order:
+                data['tracking_token'] = signing.dumps(
+                    {'order_id': order.pk},
+                    salt='self-service-order',
+                )
+        return Response(data, status=status.HTTP_200_OK)
