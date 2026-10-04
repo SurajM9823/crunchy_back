@@ -31,8 +31,8 @@ class CustomerView(APIView):
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
-        if request.user.role != 'CUSTOMER':
-            raise PermissionDenied('Sign in with a customer account.')
+        if not request.user.is_active:
+            raise PermissionDenied('This account is disabled.')
 
     def finalize_response(self, request, response, *args, **kwargs):
         response = super().finalize_response(request, response, *args, **kwargs)

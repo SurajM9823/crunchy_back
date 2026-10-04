@@ -14,7 +14,7 @@ from apps.restaurants.models import Restaurant, Branch
 from apps.user_accounts.models import User
 from .models import SignupChallenge, SmsDelivery, CustomerProfile
 from .secrets import seal
-from .auth_accounts import resolve_account
+from .auth_accounts import resolve_account, require_customer_recovery
 
 
 def issue(phone, purpose, outlet_id=None):
@@ -84,6 +84,7 @@ def reset_credentials(data):
         user, next_action = resolve_account(challenge.phone, lock=True)
         if not user or next_action != 'login':
             raise ValidationError('Unable to recover this account.')
+        require_customer_recovery(user)
         try:
             validate_password(values['password'], user)
         except DjangoValidationError as error:

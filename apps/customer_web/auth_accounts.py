@@ -9,11 +9,20 @@ def phone_users(phone, *, lock=False):
     return list(queryset.filter(phone_number__in=[phone, phone[1:], phone[4:]]))
 
 
+def is_staff_account(user):
+    return (user.role != 'CUSTOMER' or user.is_staff or user.is_superuser
+            or hasattr(user, 'employee_profile'))
+
+
+def require_customer_recovery(user):
+    if user and is_staff_account(user):
+        raise ValidationError({'code': 'staff_recovery_required', 'detail':
+            'You can order with your staff password. To reset it, use staff account recovery or contact your administrator.'})
+
+
 def can_complete_signup(user):
     return (
-        user.role == 'CUSTOMER'
-        and not user.is_staff and not user.is_superuser
-        and not hasattr(user, 'employee_profile')
+        not is_staff_account(user)
         and (not user.password or not user.has_usable_password())
         and not CustomerProfile.objects.filter(user=user).exists()
     )
@@ -27,10 +36,6 @@ def resolve_account(phone, *, lock=False):
     if not users:
         return None, 'signup'
     user = users[0]
-    if (user.role != 'CUSTOMER' or user.is_staff or user.is_superuser
-            or hasattr(user, 'employee_profile')):
-        raise ValidationError({'code': 'staff_account', 'detail':
-            'This number belongs to a staff account. Use staff sign-in or contact the outlet.'})
     if can_complete_signup(user):
         return user, 'signup'
     if not user.is_active:

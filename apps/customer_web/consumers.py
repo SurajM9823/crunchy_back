@@ -43,7 +43,7 @@ class CustomerOrdersConsumer(AsyncJsonWebsocketConsumer):
 
     @database_sync_to_async
     def allowed(self):
-        return User.objects.filter(pk=self.user_id, role='CUSTOMER', is_active=True).exists()
+        return User.objects.filter(pk=self.user_id, is_active=True).exists()
 
     @database_sync_to_async
     def revision(self):

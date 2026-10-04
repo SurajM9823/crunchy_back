@@ -131,12 +131,73 @@ class CustomerFlowTests(TestCase):
             with self.subTest(fields=fields):
                 user = User.objects.create_user(username='protected', phone_number='9841234567', **fields)
                 result = self.post('auth/start/', {'phone':'9841234567'})
-                if fields == {'password':'Existing-secret99'}:
+                if fields.get('is_active') is not False:
                     self.assertEqual(result.data, {'exists':True})
                 else:
                     self.assertEqual(result.status_code, 400, result.data)
-                    self.assertIn(result.data['code'], ['staff_account', 'account_disabled'])
+                    self.assertEqual(result.data['code'], 'account_disabled')
                 user.delete()
+
+    def test_staff_can_login_as_shoppers_without_changing_roles(self):
+        for role in ['CASHIER', 'BRANCH_MANAGER', 'RESTAURANT_OWNER', 'SUPERADMIN']:
+            with self.subTest(role=role):
+                user = User.objects.create_user(username='staff_shopper', phone_number='9841234567',
+                    role=role, password='Staff-password99', is_staff=True, is_superuser=role == 'SUPERADMIN')
+                started = self.post('auth/start/', {'phone':'9841234567'})
+                self.assertEqual(started.data, {'exists':True})
+                logged_in = self.post('auth/login/', {'phone':'+9779841234567', 'method':'PASSWORD', 'credential':'Staff-password99'})
+                self.assertEqual(logged_in.status_code, 200, logged_in.data)
+                self.assertEqual(logged_in.data['user']['role'], role)
+                user.refresh_from_db()
+                self.assertEqual(user.role, role)
+                self.assertTrue(user.is_staff)
+                self.assertTrue(user.check_password('Staff-password99'))
+                user.delete()
+                cache.clear()
+
+    def test_staff_shopper_can_checkout_and_only_see_own_customer_data(self):
+        from asgiref.sync import async_to_sync
+        from .consumers import CustomerOrdersConsumer
+        staff = User.objects.create_user(username='staff_shopper', phone_number='9841234567',
+            role='CASHIER', password='Staff-password99', branch=self.branch, restaurant=self.brand)
+        logged_in = self.post('auth/login/', {'phone':'9841234567', 'method':'PASSWORD', 'credential':'Staff-password99'})
+        self.client.credentials(HTTP_AUTHORIZATION='Bearer '+logged_in.data['access'])
+        self.assertEqual(self.client.get('/api/v1/customer/profile/').status_code, 200)
+        address = self.post('addresses/', {'label':'Home', 'address':'Staff home'})
+        self.assertEqual(address.status_code, 201, address.data)
+        cart_path = f'/api/v1/customer/cart/?outlet_id={self.branch.pk}'
+        cart = self.client.put(cart_path, {'items':[self.cart_item()], 'version':0}, format='json')
+        self.assertEqual(cart.status_code, 200, cart.data)
+        created = self.checkout()
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(CustomerOrder.objects.get(order_id=created.data['id']).user_id, staff.pk)
+        orders = self.client.get('/api/v1/customer/orders/')
+        self.assertEqual([row['id'] for row in orders.data['results']], [created.data['id']])
+        self.assertEqual(self.client.get(f'/api/v1/orders/customer/{created.data["id"]}/slip/').status_code, 200)
+        self.assertEqual(self.post('socket-ticket/', {}).status_code, 200)
+        consumer = CustomerOrdersConsumer()
+        consumer.user_id = staff.pk
+        self.assertTrue(async_to_sync(consumer.allowed)())
+        self.client.force_authenticate(self.owner)
+        self.assertEqual(self.client.get('/api/v1/customer/orders/').data['results'], [])
+        self.assertEqual(self.client.get(f'/api/v1/customer/addresses/{address.data["id"]}/').status_code, 404)
+        self.assertEqual(self.post(f'orders/{created.data["id"]}/cancel/', {}).status_code, 404)
+        staff.is_active = False
+        staff.save(update_fields=['is_active'])
+        self.assertFalse(async_to_sync(consumer.allowed)())
+
+    def test_customer_sms_recovery_cannot_reset_staff_credentials(self):
+        user = User.objects.create_user(username='staff_shopper', phone_number='9841234567',
+            role='CASHIER', password='Staff-password99')
+        response = self.post('auth/recovery-start/', {'phone':'9841234567'})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['code'], 'staff_recovery_required')
+        self.assertFalse(SignupChallenge.objects.exists())
+        user.is_active = False
+        user.save(update_fields=['is_active'])
+        response = self.post('auth/login/', {'phone':'9841234567', 'method':'PASSWORD', 'credential':'Staff-password99'})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['code'], 'account_disabled')
 
     def test_blank_password_guest_can_signup(self):
         guest = User.objects.create(username='guest', phone_number='9841234567', password='', is_active=False)
@@ -317,7 +378,7 @@ class CustomerFlowTests(TestCase):
         self.client.force_authenticate(self.other)
         self.assertEqual(self.client.get(path).data, {'items': [], 'version': 0})
         self.client.force_authenticate(self.owner)
-        self.assertEqual(self.client.get(path).status_code, 403)
+        self.assertEqual(self.client.get(path).data, {'items': [], 'version': 0})
 
     def test_cart_rejects_other_restaurant_products_and_invalid_quantities(self):
         self.client.force_authenticate(self.customer)

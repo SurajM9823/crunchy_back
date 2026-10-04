@@ -18,7 +18,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from apps.user_accounts.models import User
 from apps.user_accounts.serializers import UserOutputSerializer
 from .models import CustomerProfile, SignupChallenge
-from .auth_accounts import resolve_account
+from .auth_accounts import resolve_account, require_customer_recovery
 
 
 def phone_number(value):
@@ -70,6 +70,8 @@ class CustomerAuthView(APIView):
             exists = next_action == 'login'
             if action == 'start' and exists:
                 return Response({'exists': True})
+            if action == 'recovery-start':
+                require_customer_recovery(user)
             purpose = 'SIGNUP' if next_action == 'signup' else 'RECOVERY'
             result = otp.issue(phone, purpose, data.get('outlet_id'))
             return Response({'exists': exists, 'next_action': 'signup' if purpose == 'SIGNUP' else 'recovery', **result})
