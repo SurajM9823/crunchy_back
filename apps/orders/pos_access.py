@@ -16,9 +16,11 @@ def can_access(user, branch, capability='orders'):
         if not employee.is_active or employee.assigned_outlet_id != branch.pk:
             return False
         pages = set(employee.assigned_pages or [])
+        if capability in ('daybook', 'daybook_void'):
+            return 'daybook' in pages and (capability == 'daybook' or employee.role in ('STORE_MANAGER','SUPER_ADMIN'))
         if capability in ('loyalty', 'loyalty_manage'):
             return 'loyalty' in pages and (capability == 'loyalty' or employee.role in ('STORE_MANAGER','SUPER_ADMIN'))
-        if capability in ('discount', 'refund', 'loyalty_manage'):
+        if capability in ('discount', 'refund', 'loyalty_manage', 'daybook_void'):
             return employee.role in ('STORE_MANAGER','SUPER_ADMIN') and 'pos' in pages
         if capability == 'billing':
             return 'pos' in pages and employee.role in ('CASHIER','STORE_MANAGER','SUPER_ADMIN')
@@ -27,7 +29,7 @@ def can_access(user, branch, capability='orders'):
         return False
     if user.role == UserRole.BRANCH_MANAGER:
         return True
-    if capability in ('discount', 'refund', 'loyalty_manage'):
+    if capability in ('discount', 'refund', 'loyalty_manage', 'daybook_void'):
         return False
     if user.role == UserRole.CASHIER:
         return True

@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     'apps.delivery',
     'apps.customer_web',
     'apps.loyalty',
+    'apps.daybook',
 ]
 
 # Temporary signup only: display a generated test code. Never an existing-account login bypass.
@@ -226,6 +227,7 @@ CELERY_TIMEZONE = 'UTC'
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 30 * 60
 CELERY_BEAT_SCHEDULE = {
+    'publish-daybook-outbox': {'task': 'apps.daybook.tasks.publish_daybook_events', 'schedule': 1.0},
     'prune-website-visits': {'task': 'apps.customer_web.tasks.prune_website_visits', 'schedule': 86400.0},
     'send-customer-sms': {'task': 'apps.customer_web.tasks.send_pending_sms', 'schedule': 10.0},
     'publish-pos-outbox': {'task': 'apps.orders.tasks.publish_pos_events', 'schedule': 1.0},
