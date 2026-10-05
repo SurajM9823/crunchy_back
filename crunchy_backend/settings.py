@@ -165,6 +165,7 @@ STATICFILES_DIRS = [
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 MENU_MEDIA_BASE_URL = os.getenv('MENU_MEDIA_BASE_URL', '')
+TV_NEPALI_VOICE = os.getenv('TV_NEPALI_VOICE', 'ne-NP-HemkalaNeural')
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'

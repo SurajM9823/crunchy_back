@@ -10,6 +10,21 @@ from .models import OrderOutboxEvent
 logger=logging.getLogger(__name__)
 
 
+@shared_task(bind=True, max_retries=3, default_retry_delay=60, soft_time_limit=35, time_limit=45)
+def generate_pickup_audio(self, text):
+    from django.core.cache import cache
+    from .announcement_services import generate_audio, audio_identity
+    try:
+        return generate_audio(text)
+    except Exception as exc:
+        if self.request.retries >= self.max_retries:
+            _, key = audio_identity(text)
+            cache.set(key, 'failed', timeout=60)
+            logger.exception('Nepali announcement generation failed after retries')
+            raise
+        raise self.retry(exc=exc, countdown=60 * (2 ** self.request.retries))
+
+
 @shared_task(autoretry_for=(Exception,), retry_backoff=60, max_retries=3)
 def publish_pos_events():
     ids=list(OrderOutboxEvent.objects.filter(published_at__isnull=True,next_attempt_at__lte=timezone.now()).order_by('created_at').values_list('pk',flat=True)[:100])
@@ -36,6 +51,15 @@ def publish_pos_events():
                     'table_number':order.table.table_number if order.table_id else None}
                 envelope['round_number'] = event.payload.get('round_number')
                 envelope['round_status'] = event.payload.get('round_status')
+                # Prepare the spoken token while cooking, in a separate task.
+                # Speech availability must never prevent order event delivery.
+                if order.status in ('ACCEPTED', 'PREPARING', 'READY'):
+                    try:
+                        from .announcement_services import pickup_token_text, request_audio
+                        for number in order.items.filter(is_voided=False).values_list('round_number', flat=True).distinct():
+                            request_audio(pickup_token_text(order.order_number, number))
+                    except Exception:
+                        logger.exception('Could not prepare pickup audio for order %s', order.pk)
                 async_to_sync(layer.group_send)(f'outlet_{event.branch_id}_kitchen',
                     {'type':'kitchen_ticket_update', **envelope})
                 async_to_sync(layer.group_send)(f'order_{order.pk}', {'type':'order_event', **envelope})

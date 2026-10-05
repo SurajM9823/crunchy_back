@@ -84,6 +84,17 @@ def get_kitchen_active_tickets(branch_id: int):
     )
 
 
+def get_announcement_order(branch_id, token, round_number):
+    from django.shortcuts import get_object_or_404
+    return get_object_or_404(
+        Order.objects.select_related('table').filter(
+            branch_id=branch_id, order_number=token,
+            status__in=['ACCEPTED', 'PREPARING', 'READY'],
+            items__round_number=round_number, items__is_voided=False,
+        ).distinct()
+    )
+
+
 def get_live_tv_pickup_tickets(branch_id: int) -> dict:
     """
     TV Screen Live Display Query:

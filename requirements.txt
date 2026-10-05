@@ -13,3 +13,4 @@ Pillow>=10.0.0
 qrcode>=8.0,<9
 
 cryptography>=44.0
+edge-tts==7.2.8

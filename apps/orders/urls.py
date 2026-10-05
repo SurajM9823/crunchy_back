@@ -1,4 +1,5 @@
 from django.urls import path
+from .announcement_views import PickupAnnouncementView
 from .receipts import CustomerOrderSlipView, SelfServiceReceiptView, ReceiptTrackingView
 from .self_service import SelfServiceCheckoutView, SelfServiceOrderView, SelfServiceTablesView, SelfServiceQuoteView, SelfServiceVoidView
 from .pos_views import PosOrdersView, PosQuoteView, PosMetaView, PosDetailView, PosCommandView, PosReceiptView, PosSocketTicketView, PosBillQuoteView, PosLayoutView
@@ -12,6 +13,7 @@ from .views import (
 )
 
 urlpatterns = [
+    path('display/<int:outlet_id>/announcement/', PickupAnnouncementView.as_view()),
     path('self-service/items/void/', SelfServiceVoidView.as_view()),
     path('tracking/', ReceiptTrackingView.as_view()),
     path('customer/<int:order_id>/slip/', CustomerOrderSlipView.as_view()),
