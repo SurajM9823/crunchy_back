@@ -22,11 +22,24 @@ def receipt_document(row):
     from qrcode.image.svg import SvgPathImage
     origin = settings.FRONTEND_BASE_URL.rstrip('/')
     url = f'{origin}/track?{urlencode({"token": tracking_token(row.order_id)})}'
-    output = io.BytesIO()
-    qrcode.make(url, image_factory=SvgPathImage, box_size=6, border=4).save(output)
+    def qr_image(value):
+        output = io.BytesIO()
+        qrcode.make(value, image_factory=SvgPathImage, box_size=6, border=4).save(output)
+        return 'data:image/svg+xml;base64,' + base64.b64encode(output.getvalue()).decode()
+    seller = dict(row.snapshot.get('seller', {}))
+    branch = row.order.branch
+    restaurant = branch.restaurant
+    defaults = {'address': branch.address_line or restaurant.address or branch.city,
+                'phone': branch.phone_number or restaurant.phone,
+                'logo': restaurant.logo.url if restaurant.logo else restaurant.logo_url,
+                'website': restaurant.website or origin}
+    for key, value in defaults.items():
+        if not seller.get(key):
+            seller[key] = value
+    website = seller['website']
     return {'number': row.number, 'kind': row.kind, 'created_at': row.created_at.isoformat(),
-            'snapshot': row.snapshot, 'tracking_url': url,
-            'tracking_qr': 'data:image/svg+xml;base64,' + base64.b64encode(output.getvalue()).decode()}
+            'snapshot': {**row.snapshot, 'seller': seller}, 'tracking_url': url,
+            'tracking_qr': qr_image(url), 'website_url': website, 'website_qr': qr_image(website)}
 
 
 def latest_receipt(order_id):

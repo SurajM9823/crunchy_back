@@ -233,7 +233,9 @@ def receipt(order, kind, sequence):
     snapshot = order_data(order_queryset(order.branch).get(pk=order.pk))
     restaurant = order.branch.restaurant
     snapshot['seller'] = {'name':restaurant.legal_name or restaurant.name,'outlet':order.branch.name,
-        'address':order.branch.address_line,'phone':order.branch.phone_number,'pan':restaurant.pan_number,
+        'address':order.branch.address_line or restaurant.address or order.branch.city,
+        'phone':order.branch.phone_number or restaurant.phone,'pan':restaurant.pan_number,
+        'website':restaurant.website,'logo':restaurant.logo.url if restaurant.logo else restaurant.logo_url,
         'fiscal_year':restaurant.fiscal_year,'currency':restaurant.currency}
     return PosReceipt.objects.create(order=order,number=f'{kind}-{order.branch_id}-{sequence.receipt_counter:08d}',kind=kind,snapshot=snapshot)
 

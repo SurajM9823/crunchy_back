@@ -46,6 +46,8 @@ class ReceiptTests(TestCase):
         svg = base64.b64decode(doc['tracking_qr'].split(',', 1)[1])
         self.assertIn(b'<svg', svg)
         self.assertIn(b'<path', svg)
+        self.assertEqual(doc['website_url'], 'https://orders.example.test')
+        self.assertIn(b'<svg', base64.b64decode(doc['website_qr'].split(',', 1)[1]))
         self.receipt.refresh_from_db()
         self.assertNotIn('tracking_url', self.receipt.snapshot)
 

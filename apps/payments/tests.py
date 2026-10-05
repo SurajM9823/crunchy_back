@@ -136,14 +136,15 @@ class PaymentsAndInvoicingTests(TestCase):
 
         receipt_text = format_thermal_receipt(invoice, width=42)
 
-        # Verify key statutory components in thermal printout
+        # Verify compact customer-facing bill
         self.assertIn("CRUNCHY BAG TAX CORP", receipt_text)
-        self.assertIn("Durbarmarg Branch", receipt_text)
-        self.assertIn("PAN NO: 601234567", receipt_text)
-        self.assertIn("TAX INVOICE", receipt_text)
+        self.assertNotIn("Durbarmarg Branch", receipt_text)
+        self.assertNotIn("PAN NO:", receipt_text)
+        self.assertIn("BILL", receipt_text)
         self.assertIn(invoice.invoice_number, receipt_text)
         self.assertIn("Chicken Burger Meal", receipt_text)
-        self.assertIn("Included VAT (13%):", receipt_text)
+        self.assertNotIn("VAT", receipt_text)
+        self.assertIn("24-hour delivery within Kathmandu", receipt_text)
         self.assertIn("GRAND TOTAL:", receipt_text)
 
     def test_payment_settle_api(self):

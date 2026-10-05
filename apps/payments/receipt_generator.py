@@ -1,11 +1,12 @@
 from decimal import Decimal
+from textwrap import wrap
 from django.utils import timezone
 
 
 def format_thermal_receipt(invoice, width: int = 42) -> str:
     """
     Generates formatted ESC/POS plain-text thermal receipt for 80mm (42 cols) or 58mm (32 cols).
-    Includes Statutory PAN, 13% Tax-inclusive VAT breakdown, and cash round-down savings.
+    Compact customer bill with item columns and cash round-down savings.
     """
     branch = invoice.branch
     restaurant = invoice.restaurant
@@ -27,15 +28,17 @@ def format_thermal_receipt(invoice, width: int = 42) -> str:
 
     # Header
     lines.append(center(restaurant.name.upper()))
-    lines.append(center(branch.name))
     if getattr(branch, 'address_line', None):
         lines.append(center(branch.address_line))
+    elif restaurant.address:
+        lines.append(center(restaurant.address))
     elif getattr(branch, 'city', None):
         lines.append(center(branch.city))
     if getattr(branch, 'phone_number', None):
         lines.append(center(f"Tel: {branch.phone_number}"))
-    lines.append(center(f"PAN NO: {invoice.seller_pan}"))
-    lines.append(center("TAX INVOICE"))
+    elif restaurant.phone:
+        lines.append(center(f"Tel: {restaurant.phone}"))
+    lines.append(center("BILL"))
     lines.append(divider('='))
 
     # Meta
@@ -51,7 +54,8 @@ def format_thermal_receipt(invoice, width: int = 42) -> str:
         lines.append(row("Buyer PAN:", invoice.customer_pan))
 
     lines.append(divider('-'))
-    lines.append(f"{'ITEM':<20}{'QTY':>5}{'PRICE':>8}{'TOTAL':>9}")
+    name_width = width - 15
+    lines.append(f"{'ITEM':<{name_width}}{'QTY':>5}{'PRICE':>10}")
     lines.append(divider('-'))
 
     # Line Items
@@ -59,10 +63,9 @@ def format_thermal_receipt(invoice, width: int = 42) -> str:
         name = item.product_name
         if item.variant_name:
             name += f" ({item.variant_name})"
-        if len(name) > 20:
-            name = name[:18] + ".."
-
-        lines.append(f"{name:<20}{item.quantity:>5}{str(item.unit_price):>8}{str(item.line_total):>9}")
+        name_lines = wrap(name, width=name_width) or ['']
+        lines.append(f"{name_lines[0]:<{name_width}}{item.quantity:>5}{str(item.line_total):>10}")
+        lines.extend(name_lines[1:])
 
         # Show modifiers if any
         for mod in item.modifiers.all():
@@ -77,8 +80,6 @@ def format_thermal_receipt(invoice, width: int = 42) -> str:
     if order.discount_amount > Decimal('0.00'):
         lines.append(row("Discount:", f"-NPR {order.discount_amount}"))
 
-    lines.append(row("Taxable Amount (Net):", f"NPR {invoice.taxable_amount}"))
-    lines.append(row("Included VAT (13%):", f"NPR {invoice.vat_amount}"))
 
     if invoice.cash_round_down_savings > Decimal('0.00'):
         lines.append(row("Cash Round-Down Saving:", f"-NPR {invoice.cash_round_down_savings}"))
@@ -89,9 +90,9 @@ def format_thermal_receipt(invoice, width: int = 42) -> str:
     lines.append(divider('='))
 
     # Footer
-    lines.append(center("Prices are inclusive of all statutory taxes."))
     lines.append(center("Thank you for visiting Crunchy Bag!"))
-    lines.append(center("www.crunchybag.com"))
+    lines.append(center(restaurant.website or "www.crunchybag.com"))
+    lines.append(center("24-hour delivery within Kathmandu"))
     lines.append("\n\n\n")  # Feed for paper cutter
 
     return "\n".join(lines)
