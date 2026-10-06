@@ -55,7 +55,7 @@ def format_thermal_receipt(invoice, width: int = 42) -> str:
 
     lines.append(divider('-'))
     name_width = width - 15
-    lines.append(f"{'ITEM':<{name_width}}{'QTY':>5}{'PRICE':>10}")
+    lines.append(f"{'ITEM':<{name_width}}{'QTY':>5}{'AMOUNT':>10}")
     lines.append(divider('-'))
 
     # Line Items

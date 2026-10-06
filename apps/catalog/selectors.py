@@ -101,6 +101,15 @@ def _compile_menu(branch, channel, revision, now):
                 if override and override.price_override is not None:
                     combo_price = override.price_override
                 row['combo_original_price'] = str(original)
+                # Bundle membership is independent of standalone channel visibility.
+                row['combo_products'] = []
+                for part in product.combo_items:
+                    component = products[part['product_id']]
+                    detail = dict(ProductDetailSerializer(component).data)
+                    for private in ('cost_price', 'recipe_ingredients', 'linked_inventory_item'):
+                        detail.pop(private, None)
+                    detail['base_price'] = str(base_price(component, overrides.get(component.pk)))
+                    row['combo_products'].append(detail)
                 row['is_available'] = row['is_available'] and all(
                     available(products[r['product_id']], overrides.get(r['product_id'])) and stock_available(products[r['product_id']], branch, r['quantity']) for r in product.combo_items)
             except ValidationError:
@@ -128,7 +137,7 @@ def get_outlet_menu(branch_id, channel='all', force_refresh=False):
     branch = Branch.objects.get(pk=branch_id, is_active=True)
     revision = MenuRevision.objects.filter(branch=branch).values_list('revision', flat=True).first() or 0
     now = timezone.now()
-    key = f'menu:v2:{branch_id}:{revision}:{channel}:{int(now.timestamp()) // 60}'
+    key = f'menu:v3:{branch_id}:{revision}:{channel}:{int(now.timestamp()) // 60}'
     # force_refresh retained for internal compatibility; revision is the invalidation mechanism.
     try:
         cached = cache.get(key)
@@ -213,11 +222,13 @@ def quote_combo_components(combo, raw, price, products, overrides, schedules, ch
     for selection in selections:
         product = products.get(selection['product_id'])
         override = overrides.get(selection['product_id'])
-        if not product or product.is_combo_package or not available(product, override) or not visible(product, override, channel):
+        if not product or product.is_combo_package or not available(product, override) or (product.pk not in included and not visible(product, override, channel)):
             raise ValidationError('A selected combo component is unavailable.')
         variant, modifiers = resolve_choices(product, selection)
         count = selection['quantity']
         covered = min(included.get(product.pk, 0), count)
+        if count > covered and not visible(product, override, channel):
+            raise ValidationError('An extra combo component is unavailable for this channel.')
         included[product.pk] = included.get(product.pk, 0) - covered
         default = next((v for v in product.variants.all() if v.is_default), None)
         delta = (variant.price if variant else product.base_price) - (default.price if default else product.base_price)

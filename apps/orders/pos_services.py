@@ -4,7 +4,7 @@ import json
 import uuid
 from decimal import Decimal, ROUND_HALF_UP
 from django.db import transaction
-from django.db.models import Max
+from django.db.models import Max, Sum
 from django.utils import timezone
 from rest_framework.exceptions import APIException, ValidationError, NotFound
 from apps.catalog.selectors import quote_items, product_queryset
@@ -190,7 +190,7 @@ def remove_waiting_item(order, data, actor=None):
     remaining = order.items.filter(round_number=row.round_number, is_voided=False)
     if not remaining.filter(requires_kitchen=True).exists():
         remaining.filter(kitchen_status='WAITING').update(kitchen_status='READY', ready_at=timezone.now())
-    order.subtotal -= reduction
+    order.subtotal = order.items.filter(is_voided=False).aggregate(total=Sum('line_total'))['total'] or Decimal('0.00')
     apply_totals(order)
     if order.status != 'PENDING':
         sync_status(order)

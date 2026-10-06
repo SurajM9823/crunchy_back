@@ -140,6 +140,24 @@ class MenuWorkflowTests(TestCase):
         outlet_update_product(self.branch, self.product, is_available=True, is_web_visible=True)
         self.assertFalse(get_outlet_menu(self.branch.pk, 'web')['categories'][0]['products'][0]['is_available'])
 
+    def test_combo_keeps_components_hidden_from_standalone_channels(self):
+        hidden = product_create(category=self.category, name='Included chicken', base_price=Decimal('349'),
+            is_web_visible=False, show_on_qr=False, show_on_pos=False)
+        combo = product_create(category=self.category, name='Complete bundle', base_price=Decimal('1'),
+            is_combo_package=True, combo_discount_type='percentage', combo_discount_value=Decimal('10'),
+            combo_items=[{'product_id': self.product.pk, 'quantity': 1}, {'product_id': hidden.pk, 'quantity': 1}])
+        for channel in ('web', 'qr', 'pos', 'kiosk', 'delivery'):
+            with self.subTest(channel=channel):
+                rows = [p for c in get_outlet_menu(self.branch.pk, channel)['categories'] for p in c['products']]
+                self.assertNotIn(hidden.pk, [p['id'] for p in rows])
+                bundle = next(p for p in rows if p['id'] == combo.pk)
+                self.assertEqual(len(bundle['combo_products']), 2)
+                self.assertNotIn('cost_price', bundle['combo_products'][0])
+                quote = quote_items(self.branch, [{'product_id': combo.pk, 'quantity': 1,
+                    'combo_selections': [{'product_id': p.pk, 'quantity': 1} for p in (self.product, hidden)]}], channel)
+                self.assertEqual(quote['items'][0]['unit_price'], bundle['base_price'])
+                self.assertEqual(len(quote['items'][0]['combo_components']), 2)
+
     def test_etag_validation_invalid_outlets_and_cache_failure(self):
         self.client.force_authenticate(None)
         res = self.client.get(self.path('menu/'))

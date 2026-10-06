@@ -105,7 +105,7 @@ class OutletMenuAPIView(APIView):
         channel = request.query_params.get('channel', 'web')
         branch = resolve_branch(request, manage=channel == 'all', operational=channel == 'pos')
         data = selectors.get_outlet_menu(branch.pk, channel)
-        etag = f'W/"menu-v2-{branch.pk}-{channel}-{data["revision"]}-{data["valid_until"]}"'
+        etag = f'W/"menu-v3-{branch.pk}-{channel}-{data["revision"]}-{data["valid_until"]}"'
         matches = parse_etags(request.headers.get('If-None-Match', ''))
         response = Response(status=304) if etag in matches or '*' in matches else Response(data)
         response['ETag'] = etag

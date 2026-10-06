@@ -58,6 +58,23 @@ class PreparationRoundTests(TestCase):
         cooking = self.command(first.data, 'round', round_number=1, status='PREPARING')
         self.assertEqual(self.post(f'{order["id"]}/void/', {**payload,'version':cooking['version']}).status_code, 400)
 
+    def test_removal_rebuilds_totals_for_billing_and_receipts(self):
+        order = self.create(items=[{'product_id': self.product.pk, 'quantity': 4}], expected_total='800')
+        # Recover from an inconsistent stored subtotal using the surviving lines.
+        Order.objects.filter(pk=order['id']).update(subtotal='1000', total_payable='1000')
+        reduced = self.command(order, 'void', item_id=order['items'][0]['id'], quantity=2, reason='Two fewer')
+        self.assertEqual(reduced['subtotal'], '400.00')
+        self.assertEqual(reduced['total_payable'], '400.00')
+        self.assertEqual(reduced['due_amount'], '400.00')
+        detail = self.client.get(self.path(f'{order["id"]}/')).data
+        self.assertEqual(detail['items'][0]['quantity'], 2)
+        self.assertEqual(detail['items'][0]['line_total'], '400.00')
+        bill = self.post(f'{order["id"]}/billing-quote/', {'version': reduced['version']})
+        self.assertEqual(bill.status_code, 200, bill.data)
+        self.assertEqual(bill.data['due_amount'], '400.00')
+        receipt = Order.objects.get(pk=order['id']).pos_receipts.order_by('-pk').first()
+        self.assertEqual(receipt.snapshot['subtotal'], '400.00')
+
     def test_delivery_requires_all_rounds_and_cannot_append_in_transit(self):
         order = self.create(fulfillment_type='DELIVERY', customer_phone='9800000000', delivery_address='Door')
         for state in ['PREPARING','READY']:
