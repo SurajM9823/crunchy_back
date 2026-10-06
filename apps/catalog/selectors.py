@@ -232,7 +232,11 @@ def quote_combo_components(combo, raw, price, products, overrides, schedules, ch
         included[product.pk] = included.get(product.pk, 0) - covered
         default = next((v for v in product.variants.all() if v.is_default), None)
         delta = (variant.price if variant else product.base_price) - (default.price if default else product.base_price)
-        surcharge = sum((o.price_delta for o in modifiers), Decimal('0'))
+        # The advertised bundle includes its default recipe/choices. Only a
+        # customization above those defaults changes the included-unit price.
+        default_surcharge = sum((o.price_delta for g in product.modifier_groups.all()
+                                 for o in g.options.all() if o.is_default), Decimal('0'))
+        surcharge = max(Decimal('0'), sum((o.price_delta for o in modifiers), Decimal('0')) - default_surcharge)
         upgrades.extend([delta + surcharge] * covered)
         extra_price = item_price(product, override, schedules, channel, now, variant, modifiers)
         extras.extend([extra_price] * (count - covered))
