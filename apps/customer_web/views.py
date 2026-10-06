@@ -221,6 +221,10 @@ class CheckoutView(CustomerView):
                 return Response(customer_order_data(old))
             branch = branch_for(request, data)
             Branch.objects.select_for_update().get(pk=branch.pk)
+            from apps.orders.deletion import deleted_web_key
+            from apps.orders.models import PosMutation
+            if PosMutation.objects.filter(key=deleted_web_key(request.user.pk, key)).exists():
+                raise Conflict('This order was permanently deleted. Start a new checkout.')
             if not branch.restaurant.payment_qr:
                 raise ValidationError('The outlet has not configured its payment QR yet.')
             priced = customer_quote(branch, data, request.user.phone_number)

@@ -7,7 +7,15 @@ from apps.user_accounts.models import UserRole
 def can_access(user, branch, capability='orders'):
     if not user or not user.is_authenticated or not user.is_active:
         return False
-    if user.is_superuser:
+    if capability == 'delete_order':
+        if user.is_superuser or user.role == UserRole.SUPERADMIN:
+            return True
+        if user.role == UserRole.RESTAURANT_OWNER:
+            return user.restaurant_id == branch.restaurant_id
+        employee = getattr(user, 'employee_profile', None)
+        return bool(employee and employee.is_active and employee.assigned_outlet_id == branch.pk
+                    and employee.role == 'SUPER_ADMIN' and 'pos' in (employee.assigned_pages or []))
+    if user.is_superuser or user.role == UserRole.SUPERADMIN:
         return True
     if user.role == UserRole.RESTAURANT_OWNER:
         return user.restaurant_id == branch.restaurant_id

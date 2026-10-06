@@ -256,6 +256,8 @@ def mutate(branch, actor, key, action, data, order_id=None):
     previous_mutation = PosMutation.objects.filter(branch=branch,key=key).first()
     if previous_mutation:
         if previous_mutation.fingerprint != fingerprint: raise Conflict('Idempotency key was already used for a different request.')
+        if previous_mutation.response.get('deleted'):
+            raise Conflict('This order was permanently deleted.')
         return previous_mutation.response
     sequence,_ = PosSequence.objects.get_or_create(branch=branch)
     if action == 'create':

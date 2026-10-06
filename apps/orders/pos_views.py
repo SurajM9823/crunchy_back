@@ -59,7 +59,7 @@ class PosMetaView(StaffAPIView):
             'table_groups':list(TableGroup.objects.filter(branch=branch).values('id','name')),
             'inactive_tables':list(DiningTable.objects.filter(branch=branch,is_active=False).values('id','table_number','capacity','section','is_active')),
             'tables':list(DiningTable.objects.filter(branch=branch,is_active=True).annotate(active_order_id=Subquery(active_orders.values('pk')[:1])).order_by('section','table_number').values('id','table_number','capacity','section','active_order_id')),
-            'permissions':{c:can_access(request.user,branch,c) for c in ['orders','billing','kitchen','discount','refund']},
+            'permissions':{c:can_access(request.user,branch,c) for c in ['orders','billing','kitchen','discount','refund','delete_order']},
             'fulfillment_modes':[name for name,field in [('DINE_IN','enable_dine_in'),('TAKEAWAY','enable_takeaway'),('DELIVERY','enable_delivery'),('DRIVE_THRU','enable_drive_thru')] if getattr(branch,field)],
             'payment_methods':[name for name,field in [('CASH','enable_cash'),('CARD','enable_card'),('FONEPAY','enable_fonepay'),('ESEWA','enable_esewa'),('KHALTI','enable_khalti')] if getattr(branch.restaurant,field)]+['BANK_TRANSFER','CREDIT'],
             'accepting_orders':branch.accepting_orders and branch.enable_pos})
@@ -79,6 +79,17 @@ class PosDetailView(StaffAPIView):
     def get(self,request,order_id):
         branch=staff_branch(request)
         return Response(order_data(get_object_or_404(order_queryset(branch),pk=order_id)))
+
+
+class PosDeleteView(StaffAPIView):
+    def post(self, request, order_id):
+        from .pos_serializers import PosDeleteSerializer
+        from .deletion import delete_order
+        branch = staff_branch(request, 'delete_order')
+        serializer = PosDeleteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return Response(delete_order(branch, request.user, request.headers.get('Idempotency-Key'),
+                                     order_id, serializer.validated_data))
 
 
 class PosBillQuoteView(StaffAPIView):

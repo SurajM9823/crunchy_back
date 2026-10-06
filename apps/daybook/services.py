@@ -20,6 +20,8 @@ def mutate(branch, actor, key, action, data, entry_id=None):
     if previous:
         if previous.fingerprint != fingerprint:
             raise Conflict('This request key was already used for different entry details.')
+        if previous.response.get('deleted'):
+            raise Conflict('This entry was removed with its order.')
         return previous.response
     if action == 'create':
         row = DaybookEntry.objects.create(branch=branch, recorded_by=actor, **data)

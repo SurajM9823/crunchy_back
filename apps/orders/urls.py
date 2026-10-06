@@ -2,7 +2,7 @@ from django.urls import path
 from .announcement_views import PickupAnnouncementView
 from .receipts import CustomerOrderSlipView, SelfServiceReceiptView, ReceiptTrackingView
 from .self_service import SelfServiceCheckoutView, SelfServiceOrderView, SelfServiceTablesView, SelfServiceQuoteView, SelfServiceVoidView
-from .pos_views import PosOrdersView, PosQuoteView, PosMetaView, PosDetailView, PosCommandView, PosReceiptView, PosSocketTicketView, PosBillQuoteView, PosLayoutView
+from .pos_views import PosDeleteView, PosOrdersView, PosQuoteView, PosMetaView, PosDetailView, PosCommandView, PosReceiptView, PosSocketTicketView, PosBillQuoteView, PosLayoutView
 from .views import (
     CheckoutAPIView,
     OrderDetailAPIView,
@@ -31,6 +31,7 @@ urlpatterns = [
     path('pos/tables/<int:object_id>/', PosLayoutView.as_view(), {'kind': 'table'}),
     path('pos/socket-ticket/', PosSocketTicketView.as_view()),
     path('pos/receipts/<int:receipt_id>/', PosReceiptView.as_view()),
+    path('pos/<int:order_id>/delete/', PosDeleteView.as_view()),
     path('pos/<int:order_id>/', PosDetailView.as_view()),
     path('pos/<int:order_id>/billing-quote/', PosBillQuoteView.as_view()),
     *[path(f'pos/<int:order_id>/{action}/', PosCommandView.as_view(), {'action':action}) for action in ['append','settle','transition','void','refund','call','bill','round']],

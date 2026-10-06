@@ -49,6 +49,8 @@ def checkout(data, key):
     if previous:
         if previous.fingerprint != fingerprint:
             raise Conflict('This request key belongs to another order.')
+        if previous.response.get('deleted'):
+            raise Conflict('This order was permanently deleted.')
         return previous.response
     if not branch.accepting_orders:
         raise ValidationError('This outlet is not accepting orders.')
@@ -190,6 +192,8 @@ def remove_table_item(data, key):
     if previous:
         if previous.fingerprint != fingerprint:
             raise Conflict('This request key belongs to another change.')
+        if previous.response.get('deleted'):
+            raise Conflict('This order was permanently deleted.')
         return previous.response
     order = Order.objects.select_for_update().filter(pk=capability.get('order_id'), branch=branch, table=table, is_pos_managed=True).first()
     table.refresh_from_db()

@@ -303,7 +303,7 @@ class PosMutation(models.Model):
 class OrderOutboxEvent(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     branch = models.ForeignKey('restaurants.Branch', on_delete=models.CASCADE)
-    order = models.ForeignKey(Order, on_delete=models.CASCADE)
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, null=True, blank=True)
     event_type = models.CharField(max_length=64)
     payload = models.JSONField(default=dict)
     created_at = models.DateTimeField(auto_now_add=True)

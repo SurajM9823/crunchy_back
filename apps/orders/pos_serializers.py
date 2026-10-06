@@ -96,3 +96,8 @@ class PosListSerializer(serializers.Serializer):
         if attrs.get('start_date') and attrs.get('end_date') and attrs['start_date'] > attrs['end_date']:
             raise serializers.ValidationError('End date must be on or after start date.')
         return attrs
+
+
+class PosDeleteSerializer(VersionSerializer):
+    confirmation = serializers.CharField(max_length=64)
+    restore_stock = serializers.BooleanField(default=False)
