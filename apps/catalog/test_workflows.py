@@ -158,6 +158,22 @@ class MenuWorkflowTests(TestCase):
                 self.assertEqual(quote['items'][0]['unit_price'], bundle['base_price'])
                 self.assertEqual(len(quote['items'][0]['combo_components']), 2)
 
+    def test_combo_advertised_price_includes_default_sauce_but_charges_upgrade(self):
+        from .models import ModifierGroup, ModifierOption
+        group = ModifierGroup.objects.create(product=self.product, name='Sauce')
+        default = ModifierOption.objects.create(group=group, name='Ketchup', price_delta=Decimal('11'), is_default=True)
+        upgrade = ModifierOption.objects.create(group=group, name='Mayo', price_delta=Decimal('41'))
+        combo = product_create(category=self.category, name='Sauced bundle', base_price=Decimal('1'),
+            is_combo_package=True, combo_discount_type='percentage', combo_discount_value=Decimal('20'),
+            combo_items=[{'product_id': self.product.pk, 'quantity': 1}])
+        for channel in ('web', 'qr', 'pos', 'kiosk', 'delivery'):
+            for option, expected in ((default, '320.00'), (upgrade, '350.00')):
+                quote = quote_items(self.branch, [{'product_id': combo.pk, 'quantity': 1,
+                    'combo_selections': [{'product_id': self.product.pk, 'quantity': 1,
+                        'modifier_option_ids': [option.pk]}]}], channel)
+                self.assertEqual(quote['subtotal'], expected)
+            self.assertEqual(quote_items(self.branch, [{'product_id': combo.pk, 'quantity': 1}], channel)['subtotal'], '320.00')
+
     def test_etag_validation_invalid_outlets_and_cache_failure(self):
         self.client.force_authenticate(None)
         res = self.client.get(self.path('menu/'))

@@ -17,7 +17,7 @@ def tracking_token(order_id):
     return signing.Signer(salt='receipt-order-status').sign(str(order_id))
 
 
-def receipt_document(row):
+def receipt_document(row, request=None):
     import qrcode
     from qrcode.image.svg import SvgPathImage
     origin = settings.FRONTEND_BASE_URL.rstrip('/')
@@ -29,6 +29,9 @@ def receipt_document(row):
     seller = dict(row.snapshot.get('seller', {}))
     branch = row.order.branch
     restaurant = branch.restaurant
+    payment_qr = restaurant.payment_qr.url if restaurant.payment_qr else None
+    if payment_qr and request is not None:
+        payment_qr = request.build_absolute_uri(payment_qr)
     defaults = {'address': branch.address_line or restaurant.address or branch.city,
                 'phone': branch.phone_number or restaurant.phone,
                 'logo': restaurant.logo.url if restaurant.logo else restaurant.logo_url,
@@ -39,7 +42,8 @@ def receipt_document(row):
     website = seller['website']
     return {'number': row.number, 'kind': row.kind, 'created_at': row.created_at.isoformat(),
             'snapshot': {**row.snapshot, 'seller': seller}, 'tracking_url': url,
-            'tracking_qr': qr_image(url), 'website_url': website, 'website_qr': qr_image(website)}
+            'tracking_qr': qr_image(url), 'payment_qr': payment_qr,
+            'website_url': website, 'website_qr': qr_image(website)}
 
 
 def latest_receipt(order_id):
@@ -55,7 +59,7 @@ class CustomerOrderSlipView(APIView):
     def get(self, request, order_id):
         from apps.customer_web.models import CustomerOrder
         get_object_or_404(CustomerOrder, order_id=order_id, user=request.user)
-        response = Response(receipt_document(latest_receipt(order_id)))
+        response = Response(receipt_document(latest_receipt(order_id), request))
         response['Cache-Control'] = 'private, no-store'
         return response
 
@@ -68,7 +72,7 @@ class SelfServiceReceiptView(APIView):
             data = signing.loads(request.query_params.get('token', ''), salt='self-service-order', max_age=7*86400)
         except signing.BadSignature:
             raise NotFound('Order link is invalid or expired.')
-        response = Response(receipt_document(latest_receipt(data['order_id'])))
+        response = Response(receipt_document(latest_receipt(data['order_id']), request))
         response['Cache-Control'] = 'private, no-store'
         return response
 

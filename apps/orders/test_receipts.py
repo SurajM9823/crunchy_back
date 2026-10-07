@@ -20,6 +20,7 @@ class ReceiptTests(TestCase):
         self.client.force_authenticate(self.manager)
         self.brand.legal_name = 'Saved Seller'
         self.brand.pan_number = '123456789'
+        self.brand.payment_qr = 'payment_qr/merchant.png'
         self.brand.save()
         self.branch.address_line = 'Saved outlet address'
         self.branch.phone_number = '9800000000'
@@ -37,6 +38,7 @@ class ReceiptTests(TestCase):
         response = self.client.get(f'/api/v1/orders/pos/receipts/{self.receipt.pk}/?outlet_id={self.branch.pk}')
         self.assertEqual(response.status_code, 200)
         doc = response.data
+        self.assertEqual(doc['payment_qr'], 'http://testserver' + self.brand.payment_qr.url)
         self.assertEqual(doc['snapshot']['seller']['address'], 'Saved outlet address')
         self.assertEqual(doc['snapshot']['seller']['name'], 'Saved Seller')
         self.assertEqual(doc['snapshot']['seller']['phone'], '9800000000')
@@ -90,6 +92,17 @@ class ReceiptTests(TestCase):
         guest = self.client.get('/api/v1/orders/self-service/receipt/', {'token': token})
         self.assertEqual(guest.status_code, 200)
         self.assertEqual(guest.data, customer.data)
+        self.assertEqual(customer.data['payment_qr'], 'http://testserver' + self.brand.payment_qr.url)
+
+    def test_receipt_uses_current_restaurant_payment_qr_and_handles_removal(self):
+        self.brand.payment_qr = 'payment_qr/replacement.png'
+        self.brand.save(update_fields=['payment_qr'])
+        path = f'/api/v1/orders/pos/receipts/{self.receipt.pk}/?outlet_id={self.branch.pk}'
+        self.assertEqual(self.client.get(path).data['payment_qr'],
+                         'http://testserver' + self.brand.payment_qr.url)
+        self.brand.payment_qr = None
+        self.brand.save(update_fields=['payment_qr'])
+        self.assertIsNone(self.client.get(path).data['payment_qr'])
 
     def test_bill_and_token_share_the_tracking_destination(self):
         settled = self.client.post(f'/api/v1/orders/pos/{self.order.pk}/settle/?outlet_id={self.branch.pk}',
