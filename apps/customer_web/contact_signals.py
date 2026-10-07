@@ -7,9 +7,13 @@ from .audience_services import remember_contact
 
 @receiver(post_save, sender=Order)
 def order_contact(sender, instance, raw=False, **kwargs):
-    if not raw and instance.order_source in ('WEBSITE','TABLE_QR','KIOSK'):
-        remember_contact(instance.branch_id, instance.customer_phone, instance.customer_name,
-                         instance.order_source, seen=instance.updated_at)
+    if not raw:
+        contact = remember_contact(instance.branch_id, instance.customer_phone, instance.customer_name,
+                                   instance.order_source, seen=instance.updated_at)
+        contact_id = contact.pk if contact else None
+        if instance.customer_contact_id != contact_id:
+            Order.objects.filter(pk=instance.pk).update(customer_contact_id=contact_id)
+            instance.customer_contact_id = contact_id
 
 
 @receiver(post_save, sender=User)

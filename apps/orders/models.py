@@ -88,6 +88,8 @@ class Order(TimeStampedModel):
     )
     customer_name = models.CharField(max_length=120, default="Guest")
     customer_phone = models.CharField(max_length=32, blank=True, default="")
+    customer_contact = models.ForeignKey('customer_web.CustomerContact', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='orders')
     fulfillment_type = models.CharField(
         max_length=32,
         choices=FulfillmentType.choices,

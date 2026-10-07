@@ -103,13 +103,17 @@ class WebsiteVisit(models.Model):
 
 class CustomerContact(models.Model):
     branch = models.ForeignKey('restaurants.Branch', on_delete=models.CASCADE)
-    phone = models.CharField(max_length=20)
+    phone = models.CharField(max_length=32, blank=True)
     name = models.CharField(max_length=150, blank=True)
+    name_key = models.CharField(max_length=450, blank=True, default='')
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     sources = models.JSONField(default=list)
     last_seen = models.DateTimeField(default=timezone.now)
     last_login = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=['branch','phone'], name='customer_contact_outlet_phone')]
+        constraints = [
+            models.UniqueConstraint(fields=['branch', 'phone'], condition=~models.Q(phone=''), name='customer_contact_outlet_phone'),
+            models.UniqueConstraint(fields=['branch', 'name_key'], condition=models.Q(phone=''), name='customer_contact_outlet_name'),
+        ]
         indexes = [models.Index(fields=['branch', '-last_seen'], name='customer_contact_recent')]

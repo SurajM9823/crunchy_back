@@ -37,6 +37,13 @@ class PosOrdersView(StaffAPIView):
         return Response(mutate(branch,request.user,request.headers.get('Idempotency-Key'),'create',serializer.validated_data),status=201)
 
 
+class PosCustomersView(StaffAPIView):
+    def get(self, request):
+        from apps.customer_web.customer_selectors import matching_customers
+        branch = staff_branch(request, 'orders')
+        return Response({'results': matching_customers(branch, request.query_params.get('search', ''))})
+
+
 class PosQuoteView(StaffAPIView):
     def post(self,request):
         branch=staff_branch(request,'orders')

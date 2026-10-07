@@ -2,7 +2,7 @@ from django.urls import path
 from .announcement_views import PickupAnnouncementView
 from .receipts import CustomerOrderSlipView, SelfServiceReceiptView, ReceiptTrackingView
 from .self_service import SelfServiceCheckoutView, SelfServiceOrderView, SelfServiceTablesView, SelfServiceQuoteView, SelfServiceVoidView
-from .pos_views import PosDeleteView, PosOrdersView, PosQuoteView, PosMetaView, PosDetailView, PosCommandView, PosReceiptView, PosSocketTicketView, PosBillQuoteView, PosLayoutView
+from .pos_views import PosCustomersView, PosDeleteView, PosOrdersView, PosQuoteView, PosMetaView, PosDetailView, PosCommandView, PosReceiptView, PosSocketTicketView, PosBillQuoteView, PosLayoutView
 from .views import (
     CheckoutAPIView,
     OrderDetailAPIView,
@@ -24,6 +24,7 @@ urlpatterns = [
     path('self-service/tables/<int:outlet_id>/', SelfServiceTablesView.as_view()),
     path('pos/', PosOrdersView.as_view()),
     path('pos/quote/', PosQuoteView.as_view()),
+    path('pos/customers/', PosCustomersView.as_view()),
     path('pos/meta/', PosMetaView.as_view()),
     path('pos/table-groups/', PosLayoutView.as_view(), {'kind': 'group'}),
     path('pos/table-groups/<int:object_id>/', PosLayoutView.as_view(), {'kind': 'group'}),

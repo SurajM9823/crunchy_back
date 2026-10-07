@@ -1,9 +1,10 @@
 """Outlet-scoped traffic aggregates and customer directory (no credentials)."""
+import re
 from datetime import timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
-from django.db.models import Count, Q, F, Value
-from django.db.models.functions import TruncDate, Replace
+from django.db.models import Count, Q, Sum
+from django.db.models.functions import TruncDate
 from django.utils import timezone
 from rest_framework import serializers
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -14,7 +15,7 @@ from rest_framework.views import APIView
 from apps.restaurants.models import Branch
 from apps.orders.models import Order
 from .models import WebsiteVisit, CustomerContact
-from .audience_services import record_visit, normalized_phone
+from .audience_services import record_visit, contact_phone
 
 
 def audience_branch(request):
@@ -95,21 +96,21 @@ class CustomerDirectoryView(WebsiteAnalyticsView):
         query = request.query_params.get('search','').strip()[:100]
         rows = CustomerContact.objects.filter(branch=branch).select_related('user')
         if query:
-            rows = rows.filter(Q(name__icontains=query)|Q(phone__icontains=query)|Q(user__email__icontains=query))
+            match = Q(name__icontains=query) | Q(phone__icontains=query) | Q(user__email__icontains=query)
+            phone = contact_phone(query)
+            if phone and re.fullmatch(r'[+\d\s().-]+', query):
+                match |= Q(phone__icontains=phone)
+            rows = rows.filter(match)
         count = rows.count()
         result = list(rows.order_by('-last_seen','pk')[(page-1)*25:page*25])
-        phones = {number for row in result for number in (row.phone[1:],row.phone[4:])}
-        phone_digits = F('customer_phone')
-        for separator in ('+', ' ', '-', '(', ')', '.', '\t'):
-            phone_digits = Replace(phone_digits, Value(separator), Value(''))
-        stats = {}
-        for order in Order.objects.filter(branch=branch, order_source__in=['WEBSITE','TABLE_QR','KIOSK']).annotate(phone_digits=phone_digits).filter(phone_digits__in=phones).values('customer_phone','status','total_payable'):
-            key = normalized_phone(order['customer_phone'])
-            item = stats.setdefault(key, {'orders':0,'order_total':Decimal('0')})
-            item['orders'] += 1
-            if order['status'] != 'CANCELLED':
-                item['order_total'] += order['total_payable']
+        stats = {row['customer_contact_id']: row for row in Order.objects.filter(
+            branch=branch, customer_contact_id__in=[row.pk for row in result]
+        ).values('customer_contact_id').annotate(
+            orders=Count('pk'),
+            order_total=Sum('total_payable', filter=~Q(status='CANCELLED'), default=Decimal('0')),
+        )}
         return Response({'count':count,'page':page,'page_size':25,'results':[
             {'id':row.pk,'name':row.name or 'Guest','phone':row.phone,'email':row.user.email if row.user else '',
              'registered':bool(row.user_id),'sources':row.sources,'last_seen':row.last_seen,'last_login':row.last_login,
-             **stats.get(row.phone, {'orders':0,'order_total':Decimal('0')})} for row in result]})
+             'orders':stats.get(row.pk, {}).get('orders', 0),
+             'order_total':stats.get(row.pk, {}).get('order_total', Decimal('0'))} for row in result]})

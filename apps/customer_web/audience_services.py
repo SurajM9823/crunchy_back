@@ -14,17 +14,42 @@ def normalized_phone(value):
     return '+'+digits if re.fullmatch(r'9779[78]\d{8}', digits) else None
 
 
+def contact_phone(value):
+    """Directory identity, independent of SMS/loyalty phone eligibility."""
+    value = (value or '').strip()
+    if not value:
+        return ''
+    digits = re.sub(r'\D', '', value)
+    if value.startswith('00'):
+        value = '+' + value[2:]
+        digits = digits[2:]
+    # Preserve non-mobile and international numbers instead of dropping orders.
+    return normalized_phone(value) or ('+' + digits if value.startswith('+') and digits else digits or value)
+
+
+def contact_name(value):
+    value = ' '.join((value or '').split())[:150]
+    return '' if value.casefold() in ('guest', 'walk-in guest') else value
+
+
 @transaction.atomic
 def remember_contact(branch_id, phone, name, source, user=None, seen=None, login=False):
-    phone = normalized_phone(phone)
-    if not phone:
+    phone = contact_phone(phone)
+    name = contact_name(name)
+    if not phone and not name:
         return
-    if user is None:
-        user = User.objects.filter(role='CUSTOMER', phone_number__in=[phone, phone[4:]]).first()
-    row, created = CustomerContact.objects.get_or_create(branch_id=branch_id, phone=phone)
+    if user is None and phone:
+        aliases = [phone]
+        if normalized_phone(phone):
+            aliases.append(phone[4:])
+        user = User.objects.filter(role='CUSTOMER', phone_number__in=aliases).first()
+    identity = {'branch_id': branch_id, 'phone': phone}
+    if not phone:
+        identity['name_key'] = name.casefold()
+    row, created = CustomerContact.objects.get_or_create(**identity)
     row = CustomerContact.objects.select_for_update().get(pk=row.pk)
     row.sources = sorted(set(row.sources) | {source})
-    if name and name not in ('Guest', 'Walk-in Guest'):
+    if name and (created or not row.name or (seen or timezone.now()) >= row.last_seen):
         row.name = name[:150]
     if user:
         row.user = user
@@ -33,6 +58,7 @@ def remember_contact(branch_id, phone, name, source, user=None, seen=None, login
     if login:
         row.last_login = timezone.now()
     row.save()
+    return row
 
 
 def record_login(user, outlet_id=None):
