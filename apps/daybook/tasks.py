@@ -25,6 +25,14 @@ def publish_daybook_events():
                 async_to_sync(layer.group_send)(f'daybook_{event.branch_id}', {'type': 'daybook_event',
                     'event_type': event.event_type, 'event_id': str(event.event_id), 'outlet_id': event.branch_id,
                     'aggregate_id': event.branch_id, 'timestamp': event.created_at.isoformat()})
+                if event.event_type == 'SUPPLIER_ACCOUNT_UPDATED':
+                    async_to_sync(layer.group_send)(f'suppliers_{event.branch_id}', {'type': 'supplier_event',
+                        'event_type': event.event_type, 'event_id': str(event.event_id), 'outlet_id': event.branch_id,
+                        'aggregate_id': event.branch_id, 'timestamp': event.created_at.isoformat()})
+                if event.event_type == 'CUSTOMER_ACCOUNT_UPDATED':
+                    async_to_sync(layer.group_send)(f'customer_accounts_{event.branch_id}', {'type': 'account_event',
+                        'event_type': event.event_type, 'event_id': str(event.event_id), 'outlet_id': event.branch_id,
+                        'aggregate_id': event.branch_id, 'timestamp': event.created_at.isoformat()})
                 event.published_at = timezone.now()
                 event.last_error = ''
             except Exception as exc:

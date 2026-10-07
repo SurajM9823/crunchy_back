@@ -230,7 +230,8 @@ def record_tenders(order, tenders, actor):
 def receipt(order, kind, sequence):
     sequence.receipt_counter += 1
     sequence.save(update_fields=['receipt_counter'])
-    snapshot = order_data(order_queryset(order.branch).get(pk=order.pk))
+    snapshot = order_data(order_queryset(order.branch).get(pk=order.pk) if order.is_pos_managed
+                          else Order.objects.select_related('table').get(pk=order.pk))
     restaurant = order.branch.restaurant
     snapshot['seller'] = {'name':restaurant.legal_name or restaurant.name,'outlet':order.branch.name,
         'address':order.branch.address_line or restaurant.address or order.branch.city,

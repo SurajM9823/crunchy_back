@@ -12,15 +12,26 @@ class AudienceRevisionConsumer(AsyncJsonWebsocketConsumer):
     """Public revision notifications only; all analytics and contacts require staff REST auth."""
     async def connect(self):
         self.outlet_id = self.scope['url_route']['kwargs']['outlet_id']
+        self.group = f'customer_accounts_{self.outlet_id}'
+        await self.channel_layer.group_add(self.group, self.channel_name)
         await self.accept()
+
+    async def account_event(self, event):
+        await self.send_json({key: value for key, value in event.items() if key != 'type'})
+
+    async def disconnect(self, code):
+        if hasattr(self, 'group'):
+            await self.channel_layer.group_discard(self.group, self.channel_name)
 
     @database_sync_to_async
     def revision(self):
-        from django.db.models import Max
+        from django.db.models import Max, Count
+        from apps.orders.models import Order
         from .models import WebsiteVisit, CustomerContact
         visits = WebsiteVisit.objects.filter(branch_id=self.outlet_id).aggregate(last=Max('created_at'))
         contacts = CustomerContact.objects.filter(branch_id=self.outlet_id).aggregate(last=Max('last_seen'))
-        return hashlib.sha256(repr((visits, contacts)).encode()).hexdigest()
+        orders = Order.objects.filter(branch_id=self.outlet_id).aggregate(last=Max('updated_at'), count=Count('pk'))
+        return hashlib.sha256(repr((visits, contacts, orders)).encode()).hexdigest()
 
     async def receive_json(self, content, **kwargs):
         if content.get('type') == 'ping':
@@ -48,7 +59,8 @@ class CustomerOrdersConsumer(AsyncJsonWebsocketConsumer):
     @database_sync_to_async
     def revision(self):
         rows = list(CustomerOrder.objects.filter(user_id=self.user_id).order_by('order_id').values_list('order_id','order__version','order__updated_at',
-            'order__delivery_dispatch__updated_at'))
+            'order__status', 'order__payment_status', 'order__paid_amount', 'order__credit_amount', 'order__refunded_amount',
+            'order__delivery_dispatch__updated_at', 'order__delivery_dispatch__status'))
         return hashlib.sha256(repr(rows).encode()).hexdigest()
 
     async def receive_json(self, content, **kwargs):

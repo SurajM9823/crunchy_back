@@ -14,7 +14,7 @@ class DaybookEntry(models.Model):
     party = models.CharField(max_length=150, blank=True)
     description = models.CharField(max_length=1000)
     reference = models.CharField(max_length=128, blank=True)
-    source = models.CharField(max_length=10, default='MANUAL', choices=[('MANUAL', 'Manual'), ('SALE', 'Sale payment'), ('REFUND', 'Refund')])
+    source = models.CharField(max_length=10, default='MANUAL', choices=[('MANUAL', 'Manual'), ('SALE', 'Sale payment'), ('REFUND', 'Refund'), ('SUPPLIER', 'Supplier payment')])
     payment = models.OneToOneField('payments.PaymentTransaction', null=True, blank=True, on_delete=models.PROTECT)
     recorded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='recorded_daybook_entries')
     created_at = models.DateTimeField(default=timezone.now)

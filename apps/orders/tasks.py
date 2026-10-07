@@ -42,6 +42,9 @@ def publish_pos_events():
                     async_to_sync(layer.group_send)(f'pos_{event.branch_id}',{'type':'pos_event','event_id':str(event.pk),
                         'event_type':event.event_type,'aggregate_id':event.order_id,'outlet_id':event.branch_id,
                         'timestamp':event.created_at.isoformat(),**event.payload})
+                    async_to_sync(layer.group_send)(f'customer_accounts_{event.branch_id}', {'type': 'account_event',
+                        'event_type': event.event_type, 'event_id': str(event.pk), 'outlet_id': event.branch_id,
+                        'aggregate_id': event.order_id, 'timestamp': event.created_at.isoformat()})
                     from apps.customer_web.models import CustomerOrder
                     owner_id = CustomerOrder.objects.filter(order_id=event.order_id).values_list('user_id', flat=True).first()
                     if owner_id:

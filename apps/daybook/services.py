@@ -30,6 +30,10 @@ def mutate(branch, actor, key, action, data, entry_id=None):
         row = DaybookEntry.objects.select_for_update().select_related('recorded_by', 'voided_by').filter(branch=branch, pk=entry_id).first()
         if not row:
             raise NotFound('Entry not found at this outlet.')
+        if row.payment_id and row.payment.raw_response.get('customer_collection_id'):
+            raise ValidationError('This is a received customer payment. Use the order refund action to correct the actual payment.')
+        if row.source == 'SUPPLIER':
+            raise ValidationError('Reverse this payment from Inventory > Suppliers so the supplier balance is updated too.')
         if not row.voided_at:
             row.voided_at, row.voided_by, row.void_reason = timezone.now(), actor, data['reason']
             row.save(update_fields=['voided_at', 'voided_by', 'void_reason'])

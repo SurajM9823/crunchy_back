@@ -70,7 +70,13 @@ def supplier_create(
     email: str = "",
     address: str = "",
     credit_balance: Decimal = Decimal('0.00'),
+    is_active: bool = True,
 ) -> Supplier:
+    from apps.restaurants.models import Branch
+    from apps.daybook.models import DaybookEvent
+    Branch.objects.select_for_update().get(pk=branch.pk)
+    existing = Supplier.objects.filter(branch=branch, name__iexact=name.strip()).first()
+    name = existing.name if existing else name.strip()
     supplier, created = Supplier.objects.get_or_create(
         branch=branch,
         name=name.strip(),
@@ -80,7 +86,8 @@ def supplier_create(
             'email': email.strip(),
             'address': address.strip(),
             'credit_balance': Decimal(str(credit_balance)),
-            'is_active': True,
+            'opening_balance': Decimal(str(credit_balance)),
+            'is_active': is_active,
         }
     )
     if not created:
@@ -97,6 +104,7 @@ def supplier_create(
             updated = True
         if updated:
             supplier.save()
+    DaybookEvent.objects.create(branch=branch, event_type='SUPPLIER_ACCOUNT_UPDATED')
     return supplier
 
 
@@ -118,6 +126,11 @@ def inventory_item_create(
     else:
         sku = sku.strip().upper()
 
+    if supplier is None and supplier_name.strip():
+        supplier = supplier_create(branch, supplier_name)
+    if supplier and supplier.branch_id != branch.pk:
+        from rest_framework.exceptions import ValidationError as APIValidationError
+        raise APIValidationError('Supplier does not belong to this outlet.')
     item = InventoryItem(
         branch=branch,
         sku=sku,
@@ -263,18 +276,29 @@ def purchase_invoice_create(
     6. Books Accounts Payable (Party Khata) and Daybook entries for credit / pending purchases.
     7. Broadcasts real-time INVENTORY_RESTOCKED WebSocket event with Zero Page Reload!
     """
+    from apps.restaurants.models import Branch
+    from apps.daybook.models import DaybookEvent
+    from rest_framework.exceptions import ValidationError as APIValidationError
+    from .supplier_services import reconcile_supplier
+    Branch.objects.select_for_update().get(pk=branch.pk)
     items_data = items_data or []
+    if not items_data:
+        raise APIValidationError('At least one purchase item is required.')
 
     # 1. Idempotency Check
     if idempotency_key and idempotency_key.strip():
         existing_invoice = PurchaseInvoice.objects.filter(idempotency_key=idempotency_key.strip()).first()
         if existing_invoice:
+            if existing_invoice.branch_id != branch.pk:
+                raise APIValidationError('Purchase request key has already been used.')
             return existing_invoice
 
     # 2. Supplier Resolution / Auto-creation
     supplier = None
     if supplier_id and str(supplier_id).strip():
         supplier = Supplier.objects.filter(id=str(supplier_id).strip(), branch=branch).first()
+        if not supplier:
+            raise APIValidationError('Supplier does not belong to this outlet.')
 
     if not supplier and supplier_name and supplier_name.strip():
         supplier = Supplier.objects.filter(branch=branch, name__iexact=supplier_name.strip()).first()
@@ -288,7 +312,9 @@ def purchase_invoice_create(
             supplier.phone = supplier_phone.strip()
             supplier.save(update_fields=['phone', 'updated_at'])
 
-    final_supplier_name = supplier.name if supplier else (supplier_name.strip() if supplier_name else "Unassigned Supplier")
+    if not supplier:
+        raise APIValidationError('Choose or enter a supplier for this purchase.')
+    final_supplier_name = supplier.name
     final_supplier_phone = supplier.phone if supplier else (supplier_phone.strip() if supplier_phone else "")
 
     # Calculate computed totals if missing or 0
@@ -297,13 +323,18 @@ def purchase_invoice_create(
         q = Decimal(str(it.get('quantity', 0)))
         c = Decimal(str(it.get('unit_cost', 0)))
         d = Decimal(str(it.get('discount', 0)))
+        if q <= 0 or c < 0 or d < 0 or d > q * c:
+            raise APIValidationError('Invalid purchase quantity, unit price or line discount.')
         calc_subtotal += (q * c)
 
-    subtotal_val = Decimal(str(subtotal)) if Decimal(str(subtotal)) > Decimal('0.00') else calc_subtotal
-    disc_val = Decimal(str(discount_amount))
-    total_val = Decimal(str(total_amount)) if Decimal(str(total_amount)) > Decimal('0.00') else max(Decimal('0.00'), subtotal_val - disc_val)
+    subtotal_val = calc_subtotal.quantize(Decimal('0.01'))
+    line_discounts = sum((Decimal(str(it.get('discount', 0))) for it in items_data), Decimal('0'))
+    disc_val = max(Decimal(str(discount_amount)), line_discounts)
     paid_val = Decimal(str(paid_amount))
-    due_val = Decimal(str(due_amount)) if Decimal(str(due_amount)) > Decimal('0.00') else max(Decimal('0.00'), total_val - paid_val)
+    if disc_val < 0 or disc_val > subtotal_val or paid_val < 0:
+        raise APIValidationError('Invalid purchase discount or payment amount.')
+    total_val = (subtotal_val - disc_val).quantize(Decimal('0.01'))
+    due_val = max(Decimal('0.00'), total_val - paid_val)
 
     if payment_method == PaymentMethod.CREDIT and paid_val == Decimal('0.00'):
         due_val = total_val
@@ -327,6 +358,7 @@ def purchase_invoice_create(
         discount_amount=disc_val.quantize(Decimal('0.01')),
         total_amount=total_val.quantize(Decimal('0.01')),
         paid_amount=paid_val.quantize(Decimal('0.01')),
+        initial_paid_amount=paid_val.quantize(Decimal('0.01')),
         due_amount=due_val.quantize(Decimal('0.01')),
         payment_status=payment_status,
         payment_method=payment_method,
@@ -467,10 +499,6 @@ def purchase_invoice_create(
 
     # 6. Accounts Payable / Party Khata Credit Booking
     if due_val > Decimal('0.00') or payment_method == PaymentMethod.CREDIT:
-        if supplier:
-            supplier.credit_balance = (supplier.credit_balance or Decimal('0.00')) + due_val
-            supplier.save(update_fields=['credit_balance', 'updated_at'])
-
         DaybookAccountEntry.objects.create(
             branch=branch,
             party=supplier,
@@ -480,6 +508,11 @@ def purchase_invoice_create(
             voucher_type="PURCHASE_CREDIT" if payment_method == PaymentMethod.CREDIT else "PURCHASE_DUE",
             narrative=f"Accounts payable for purchase #{invoice.invoice_number} ({final_supplier_name})",
         )
+
+    if supplier:
+        reconcile_supplier(supplier)
+        invoice.refresh_from_db()
+        DaybookEvent.objects.create(branch=branch, event_type='SUPPLIER_ACCOUNT_UPDATED')
 
     # 7. Real-Time WebSocket broadcast
     broadcast_inventory_event(

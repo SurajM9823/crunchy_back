@@ -103,14 +103,19 @@ class CustomerDirectoryView(WebsiteAnalyticsView):
             rows = rows.filter(match)
         count = rows.count()
         result = list(rows.order_by('-last_seen','pk')[(page-1)*25:page*25])
-        stats = {row['customer_contact_id']: row for row in Order.objects.filter(
-            branch=branch, customer_contact_id__in=[row.pk for row in result]
+        from .account_selectors import financial_orders
+        stats = {row['customer_contact_id']: row for row in financial_orders(branch).filter(
+            customer_contact_id__in=[row.pk for row in result]
         ).values('customer_contact_id').annotate(
             orders=Count('pk'),
+            due=Sum('account_due', default=Decimal('0')),
+            credit=Sum('account_credit', default=Decimal('0')),
             order_total=Sum('total_payable', filter=~Q(status='CANCELLED'), default=Decimal('0')),
         )}
         return Response({'count':count,'page':page,'page_size':25,'results':[
             {'id':row.pk,'name':row.name or 'Guest','phone':row.phone,'email':row.user.email if row.user else '',
              'registered':bool(row.user_id),'sources':row.sources,'last_seen':row.last_seen,'last_login':row.last_login,
+             'due':stats.get(row.pk, {}).get('due', Decimal('0')),
+             'credit':stats.get(row.pk, {}).get('credit', Decimal('0')),
              'orders':stats.get(row.pk, {}).get('orders', 0),
              'order_total':stats.get(row.pk, {}).get('order_total', Decimal('0'))} for row in result]})

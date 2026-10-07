@@ -1,5 +1,32 @@
 import json
+from channels.db import database_sync_to_async
+from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from channels.generic.websocket import AsyncWebsocketConsumer
+
+
+class SupplierRevisionConsumer(AsyncJsonWebsocketConsumer):
+    """Only revision identifiers are public; account snapshots require staff auth."""
+    async def connect(self):
+        self.branch_id = self.scope['url_route']['kwargs']['outlet_id']
+        self.group = f'suppliers_{self.branch_id}'
+        await self.channel_layer.group_add(self.group, self.channel_name)
+        await self.accept()
+
+    @database_sync_to_async
+    def revision(self):
+        from django.db.models import Max
+        from apps.daybook.models import DaybookEvent
+        return str(DaybookEvent.objects.filter(branch_id=self.branch_id, event_type='SUPPLIER_ACCOUNT_UPDATED').aggregate(last=Max('pk'))['last'] or 0)
+
+    async def receive_json(self, content, **kwargs):
+        if content.get('type') == 'ping':
+            await self.send_json({'event_type': 'HEARTBEAT', 'revision': await self.revision()})
+
+    async def supplier_event(self, event):
+        await self.send_json({key: value for key, value in event.items() if key != 'type'})
+
+    async def disconnect(self, code):
+        await self.channel_layer.group_discard(self.group, self.channel_name)
 
 
 class InventoryConsumer(AsyncWebsocketConsumer):

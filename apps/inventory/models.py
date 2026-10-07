@@ -77,6 +77,7 @@ class Supplier(TimeStampedModel):
         default=Decimal('0.00'),
         help_text="Current accounts payable / credit khata balance in NPR"
     )
+    opening_balance = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     is_active = models.BooleanField(default=True, db_index=True)
 
     class Meta:
@@ -201,6 +202,7 @@ class PurchaseInvoice(TimeStampedModel):
     discount_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     paid_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    initial_paid_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     due_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     payment_status = models.CharField(
         max_length=20,
@@ -237,6 +239,35 @@ class PurchaseInvoice(TimeStampedModel):
 
     def __str__(self):
         return f"{self.invoice_number} - {self.supplier_name} ({self.total_amount} NPR)"
+
+
+class SupplierPayment(models.Model):
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name='payments')
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    date = models.DateField()
+    method = models.CharField(max_length=30)
+    reference = models.CharField(max_length=128, blank=True)
+    notes = models.CharField(max_length=1000, blank=True)
+    recorded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    daybook_entry = models.OneToOneField('daybook.DaybookEntry', on_delete=models.PROTECT)
+    created_at = models.DateTimeField(default=timezone.now)
+    voided_at = models.DateTimeField(null=True, blank=True)
+    void_reason = models.CharField(max_length=500, blank=True)
+    voided_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.PROTECT, related_name='voided_supplier_payments')
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=models.Q(amount__gt=0), name='supplier_payment_positive')]
+
+
+class SupplierMutation(models.Model):
+    branch = models.ForeignKey('restaurants.Branch', on_delete=models.CASCADE)
+    key = models.CharField(max_length=128)
+    fingerprint = models.CharField(max_length=64)
+    response = models.JSONField()
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['branch', 'key'], name='supplier_request_once')]
 
 
 class PurchaseInvoiceItem(TimeStampedModel):

@@ -32,6 +32,7 @@ class SupplierSerializer(serializers.ModelSerializer):
             'email',
             'address',
             'credit_balance',
+            'opening_balance',
             'is_active',
             'created_at',
             'updated_at',

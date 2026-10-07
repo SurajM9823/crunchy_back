@@ -1,4 +1,5 @@
 from django.urls import path
+from .supplier_views import SupplierAccountsView, SupplierAccountView
 from .views import (
      InventoryItemListCreateAPIView,
      InventoryItemDetailAPIView,
@@ -15,6 +16,10 @@ from .views import (
 )
 
 urlpatterns = [
+    path('supplier-accounts/', SupplierAccountsView.as_view()),
+    path('supplier-accounts/<str:supplier_id>/', SupplierAccountView.as_view()),
+    path('supplier-accounts/<str:supplier_id>/payments/', SupplierAccountView.as_view()),
+    path('supplier-accounts/<str:supplier_id>/payments/<int:payment_id>/void/', SupplierAccountView.as_view()),
     # Stock Items Catalog & Restock
     path('items/', InventoryItemListCreateAPIView.as_view(), name='inventory-item-list-create'),
     path('items/<int:item_id>/', InventoryItemDetailAPIView.as_view(), name='inventory-item-detail'),

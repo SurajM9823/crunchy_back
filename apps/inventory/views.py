@@ -270,7 +270,7 @@ class PurchaseInvoiceListCreateAPIView(APIView):
 
         search = request.query_params.get('search')
         supplier_id = request.query_params.get('supplier_id')
-        purchases = list_purchase_invoices(branch_id=branch.id, search=search, supplier_id=supplier_id)
+        purchases = list_purchase_invoices(branch_id=branch.id, search=search, supplier_id=supplier_id, limit=None)
         return Response(PurchaseInvoiceSerializer(purchases, many=True).data, status=status.HTTP_200_OK)
 
     def post(self, request):

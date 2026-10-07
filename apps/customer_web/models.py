@@ -117,3 +117,28 @@ class CustomerContact(models.Model):
             models.UniqueConstraint(fields=['branch', 'name_key'], condition=models.Q(phone=''), name='customer_contact_outlet_name'),
         ]
         indexes = [models.Index(fields=['branch', '-last_seen'], name='customer_contact_recent')]
+
+
+class CustomerCollection(models.Model):
+    contact = models.ForeignKey(CustomerContact, on_delete=models.PROTECT, related_name='collections')
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    method = models.CharField(max_length=32)
+    date = models.DateField()
+    reference = models.CharField(max_length=128, blank=True)
+    notes = models.CharField(max_length=1000, blank=True)
+    recorded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    snapshot = models.JSONField(default=dict)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=models.Q(amount__gt=0), name='customer_collection_positive')]
+
+
+class CustomerAccountMutation(models.Model):
+    branch = models.ForeignKey('restaurants.Branch', on_delete=models.CASCADE)
+    key = models.CharField(max_length=128)
+    fingerprint = models.CharField(max_length=64)
+    response = models.JSONField()
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['branch', 'key'], name='customer_account_request_once')]
