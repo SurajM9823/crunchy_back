@@ -21,7 +21,9 @@ def rounds(order):
 
 
 def append_allowed(order):
-    return order.status in ('ACCEPTED','PREPARING','READY') and order.order_source != 'WEBSITE'
+    return (order.status in ('ACCEPTED','PREPARING','READY','COMPLETED')
+            and order.order_source != 'WEBSITE'
+            and not (order.billed_at or order.paid_amount or order.credit_amount))
 
 
 def sync_status(order):

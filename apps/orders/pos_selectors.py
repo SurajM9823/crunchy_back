@@ -53,7 +53,8 @@ def list_orders(branch, filters):
     if filters.get('active'):
         qs = qs.filter(Q(status__in=ACTIVE) | (Q(total_payable__gt=F('paid_amount')) & ~Q(status='CANCELLED')))
     if filters.get('open_tabs'):
-        qs = qs.filter(status__in=ACTIVE)
+        qs = qs.filter(Q(status__in=ACTIVE) | Q(status='COMPLETED', billed_at__isnull=True,
+            paid_amount=0, credit_amount=0) & ~Q(order_source='WEBSITE'))
     if filters.get('kitchen'):
         qs = qs.filter(status__in=['PENDING','ACCEPTED','PREPARING','READY'], items__requires_kitchen=True, items__is_voided=False).distinct()
     if filters.get('fulfillment', 'ALL') != 'ALL':

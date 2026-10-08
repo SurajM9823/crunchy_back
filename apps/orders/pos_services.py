@@ -299,8 +299,12 @@ def mutate(branch, actor, key, action, data, order_id=None):
         if order.version != data['version']: raise Conflict()
         previous = order.status
         if action == 'append':
-            if not append_allowed(order): raise ValidationError('New rounds are allowed only on open POS, kiosk or table orders before dispatch. Confirmed web orders cannot be edited.')
+            if not append_allowed(order): raise ValidationError('New rounds require an unbilled, unpaid POS, kiosk or table order that is not cancelled or out for delivery.')
             if not branch.accepting_orders: raise ValidationError('This outlet is not accepting new rounds.')
+            if order.status == 'COMPLETED' and order.table_id:
+                if Order.objects.filter(branch=branch, table_id=order.table_id, status__in=ACTIVE).exclude(pk=order.pk).exists():
+                    raise Conflict('This table now has another active order. Add items to that order instead.')
+                DiningTable.objects.filter(pk=order.table_id).update(active_session_id=order.table_session_id)
             priced = quote_items(branch,data['items'],'pos')
             order.subtotal += Decimal(priced['subtotal'])
             apply_totals(order)

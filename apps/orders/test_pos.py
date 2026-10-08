@@ -60,6 +60,43 @@ class PosWorkflowTests(TestCase):
         self.assertEqual(response.status_code,200,response.data)
         return response.data
 
+    def test_completed_unbilled_order_accepts_next_round(self):
+        order = self.create(fulfillment_type='DINE_IN', table_id=self.table.pk)
+        for state in ['PREPARING', 'READY', 'COMPLETED']:
+            order = self.command(order, 'transition', status=state)
+            self.assertTrue(order['can_append'])
+        served = order['items'][0]
+        tabs = self.client.get(self.path() + '&open_tabs=true').data['results']
+        self.assertIn(order['id'], [row['id'] for row in tabs])
+        order = self.command(order, 'append', items=[{'product_id':self.product.pk, 'quantity':1}], expected_total='400')
+        self.assertEqual(order['items'][0], served)
+        self.assertEqual(order['items'][1]['round_number'], 2)
+        self.assertEqual(order['items'][1]['kitchen_status'], 'WAITING')
+        self.assertNotEqual(order['status'], 'COMPLETED')
+        self.table.refresh_from_db()
+        self.assertEqual(self.table.active_session_id, Order.objects.get(pk=order['id']).table_session_id)
+
+    def test_billing_or_payment_locks_additions(self):
+        for action, data in [('bill', {}), ('settle', {'tenders':[{'method':'CASH','amount':'50'}]})]:
+            order = self.create()
+            order = self.command(order, action, **data)
+            self.assertFalse(order['can_append'])
+            response = self.post(f"{order['id']}/append/", {'version':order['version'],
+                'items':[{'product_id':self.product.pk,'quantity':1}], 'expected_total':'400'})
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(Order.objects.get(pk=order['id']).items.count(), 1)
+
+    def test_completed_order_cannot_reclaim_occupied_table(self):
+        order = self.create(fulfillment_type='DINE_IN', table_id=self.table.pk)
+        for state in ['PREPARING', 'READY', 'COMPLETED']:
+            order = self.command(order, 'transition', status=state)
+        replacement = self.create(fulfillment_type='DINE_IN', table_id=self.table.pk)
+        response = self.post(f"{order['id']}/append/", {'version':order['version'],
+            'items':[{'product_id':self.product.pk,'quantity':1}], 'expected_total':'400'})
+        self.assertEqual(response.status_code, 409)
+        self.table.refresh_from_db()
+        self.assertEqual(self.table.active_session_id, Order.objects.get(pk=replacement['id']).table_session_id)
+
     def test_order_creation_idempotency_stock_and_outbox(self):
         data={'items':[{'product_id':self.product.pk,'quantity':2}],'expected_total':'400'}
         one=self.post('',data,'retry');two=self.post('',data,'retry')

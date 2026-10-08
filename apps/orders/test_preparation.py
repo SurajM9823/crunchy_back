@@ -40,7 +40,7 @@ class PreparationRoundTests(TestCase):
         for state in ['PREPARING','READY','SERVED']:
             order = self.command(order, 'round', round_number=2, status=state)
         self.assertEqual(order['status'], 'COMPLETED')
-        self.assertFalse(order['can_append'])
+        self.assertTrue(order['can_append'])
         self.table.refresh_from_db()
         self.assertIsNone(self.table.active_session_id)
 
