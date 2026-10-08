@@ -163,13 +163,20 @@ def add_lines(order, raw_items, priced, actor):
     return round_number
 
 
-def remove_waiting_item(order, data, actor=None):
-    if order.billed_at or order.paid_amount or order.credit_amount or order.status in ('OUT_FOR_DELIVERY','COMPLETED','CANCELLED'):
-        raise ValidationError('Only unpaid, unbilled, unprepared items can be reduced or removed.')
+def remove_order_item(order, data, actor=None):
+    if order.billed_at or order.paid_amount or order.credit_amount:
+        raise ValidationError('Billed or paid orders cannot have items changed.')
+    if order.status in ('OUT_FOR_DELIVERY','CANCELLED'):
+        raise ValidationError('Dispatched or cancelled orders cannot have items changed.')
     if order.order_source == 'WEBSITE' and order.status != 'PENDING':
         raise ValidationError('Confirmed web orders cannot be edited.')
     row = order.items.filter(pk=data['item_id'], is_voided=False).first()
-    if not row or row.kitchen_status != 'WAITING' or row.preparation_started_at:
+    if not row:
+        raise ValidationError('This item is no longer available to remove.')
+    if order.status == 'COMPLETED':
+        if row.kitchen_status != 'SERVED':
+            raise ValidationError('Only served items on completed orders can be reduced or removed.')
+    elif row.kitchen_status != 'WAITING' or row.preparation_started_at:
         raise ValidationError('Cooking, ready and served items cannot be reduced or removed.')
     quantity = data.get('quantity', row.quantity)
     if quantity > row.quantity:
@@ -317,6 +324,8 @@ def mutate(branch, actor, key, action, data, order_id=None):
             data['round_number'] = call_round(order, data.get('round_number'))
         elif action in ('settle', 'bill'):
             if order.status == 'CANCELLED': raise ValidationError('Cancelled orders cannot be settled.')
+            if action == 'bill' and order.billed_at:
+                raise ValidationError('This order is already billed. Open its saved bill instead.')
             frozen = bool(order.billed_at or order.paid_amount or order.credit_amount)
             old_manual = Decimal(order.pricing_policy.get('manual_discount_amount', str(order.discount_amount)))
             requested = data.get('discount_amount', old_manual)
@@ -372,7 +381,7 @@ def mutate(branch, actor, key, action, data, order_id=None):
             if target in ('COMPLETED','CANCELLED') and order.table_id:
                 DiningTable.objects.filter(pk=order.table_id,active_session_id=order.table_session_id).update(active_session_id=None)
         elif action == 'void':
-            remove_waiting_item(order, data, actor)
+            remove_order_item(order, data, actor)
         elif action == 'refund':
             if data['amount']>order.paid_amount-order.refunded_amount: raise ValidationError('Refund exceeds collected payments.')
             PaymentTransaction.objects.create(order=order,branch=branch,transaction_id=f'REF-{uuid.uuid4().hex}',amount=data['amount'],
@@ -382,6 +391,9 @@ def mutate(branch, actor, key, action, data, order_id=None):
         elif action != 'call': raise ValidationError('Unknown command.')
         order.version+=1
     order.save()
+    if order.order_source == 'WEBSITE':
+        from apps.customer_web.journey_services import sync_order_outcomes
+        sync_order_outcomes(order)
     audit(order,actor,previous, data.get('reason') or data.get('discount_reason') or (f'Round {data["round_number"]}: {data.get("status", action)}' if data.get('round_number') else f'Staff POS {action}'))
     if action in ['create','append','void']: receipt(order,'TOKEN',sequence)
     if action in ('settle','bill') or (action=='create' and data['tenders']): receipt(order,'BILL',sequence)

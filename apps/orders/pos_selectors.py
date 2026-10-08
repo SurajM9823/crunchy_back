@@ -10,13 +10,14 @@ ACTIVE = ['PENDING', 'ACCEPTED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY']
 
 def order_queryset(branch):
     return Order.objects.filter(branch=branch, is_pos_managed=True).select_related('table').prefetch_related(
-        Prefetch('items',queryset=OrderItem.objects.order_by('round_number','id').prefetch_related('modifiers')),
+        Prefetch('items',queryset=OrderItem.objects.order_by('round_number','id').select_related('product').prefetch_related('modifiers')),
         'payments', Prefetch('pos_receipts', queryset=PosReceipt.objects.defer('snapshot').order_by('pk')))
 
 
 def order_data(order, detail=True):
     due = max(Decimal('0'), order.total_payable - order.paid_amount) if order.status != 'CANCELLED' else Decimal('0.00')
     settlement = 'REFUNDED' if order.refunded_amount else 'PAID' if due == 0 else 'CREDIT' if order.credit_amount else 'PARTIAL' if order.paid_amount else 'UNPAID'
+    active_items = [item for item in order.items.all() if not item.is_voided]
     data = {key: getattr(order, key) for key in ['id', 'order_number', 'version', 'status', 'customer_name', 'customer_phone', 'fulfillment_type', 'order_source', 'payment_method', 'notes', 'delivery_address']}
     data.update({key: str(getattr(order, key)) for key in ['subtotal', 'total_payable', 'discount_amount', 'service_charge_amount', 'vat_included_amount', 'cash_round_down_savings', 'paid_amount', 'credit_amount', 'refunded_amount']})
     data.update(outlet_id=order.branch_id, billed_at=order.billed_at.isoformat() if order.billed_at else None,
@@ -29,7 +30,15 @@ def order_data(order, detail=True):
         'variant_name': r.variant_name, 'quantity': r.quantity, 'unit_price': str(r.unit_price), 'line_total': str(r.line_total),
         'requires_kitchen': r.requires_kitchen, 'kitchen_status': r.kitchen_status, 'round_number': r.round_number, 'item_notes': r.item_notes,
         'created_at':r.created_at.isoformat(), 'preparation_started_at':r.preparation_started_at.isoformat() if r.preparation_started_at else None,
-        'can_remove':not r.is_voided and not r.preparation_started_at and r.kitchen_status=='WAITING' and not order.billed_at and not order.paid_amount and not order.credit_amount and order.status not in ['OUT_FOR_DELIVERY','COMPLETED','CANCELLED'] and (order.order_source!='WEBSITE' or order.status=='PENDING'),
+        'image_url': ((r.product.images or [])[r.product.main_image_index]
+                      if r.product_id and r.product.main_image_index < len(r.product.images or [])
+                      else ((r.product.images or [])[0] if r.product_id and r.product.images else '')),
+        'can_remove':not r.is_voided and not order.billed_at and not order.paid_amount and not order.credit_amount
+                      and ((order.status == 'COMPLETED' and r.kitchen_status == 'SERVED')
+                           or (order.status not in ['OUT_FOR_DELIVERY','COMPLETED','CANCELLED']
+                               and r.kitchen_status == 'WAITING' and not r.preparation_started_at))
+                      and (order.order_source!='WEBSITE' or order.status=='PENDING')
+                      and (r.quantity > 1 or len(active_items) > 1),
         'combo_components': r.combo_components, 'is_voided': r.is_voided, 'void_reason': r.void_reason,
         'modifiers': [{'name': m.option_name, 'group': m.group_name, 'price_delta': str(m.price_delta)} for m in r.modifiers.all()]} for r in order.items.all()]
     from .preparation import rounds, append_allowed

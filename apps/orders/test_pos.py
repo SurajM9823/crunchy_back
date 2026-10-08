@@ -9,7 +9,7 @@ from apps.restaurants.models import Restaurant, Branch
 from apps.tables.models import DiningTable
 from apps.catalog.models import Category, Product, ProductVariant, ModifierGroup, ModifierOption
 from apps.inventory.models import InventoryItem, RecipeItem, StockTransaction
-from .models import Order, OrderOutboxEvent, PosMutation, PosCreditEntry
+from .models import Order, OrderItem, OrderOutboxEvent, PosMutation, PosCreditEntry
 from .tasks import publish_pos_events
 
 
@@ -85,6 +85,43 @@ class PosWorkflowTests(TestCase):
                 'items':[{'product_id':self.product.pk,'quantity':1}], 'expected_total':'400'})
             self.assertEqual(response.status_code, 400)
             self.assertEqual(Order.objects.get(pk=order['id']).items.count(), 1)
+
+    def test_completed_unbilled_order_can_remove_a_served_item(self):
+        order = self.create(items=[
+            {'product_id': self.product.pk, 'quantity': 1},
+            {'product_id': self.product.pk, 'quantity': 1},
+        ], expected_total='400.00')
+        for state in ['PREPARING', 'READY', 'COMPLETED']:
+            order = self.command(order, 'transition', status=state)
+        first = order['items'][0]
+        self.assertTrue(first['can_remove'])
+        self.stock.refresh_from_db()
+        stock_before = self.stock.current_stock
+        order = self.command(order, 'void', item_id=first['id'], reason='Remove unbilled item')
+        self.assertTrue(next(item for item in order['items'] if item['id'] == first['id'])['is_voided'])
+        self.assertEqual(order['status'], 'COMPLETED')
+        self.stock.refresh_from_db()
+        self.assertEqual(self.stock.current_stock, stock_before)
+
+    def test_billed_order_cannot_be_billed_again(self):
+        order = self.command(self.create(), 'bill')
+        receipt_count = len([receipt for receipt in order['receipts'] if receipt['kind'] == 'BILL'])
+        response = self.post(f"{order['id']}/bill/", {'version': order['version']})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(Order.objects.get(pk=order['id']).pos_receipts.filter(kind='BILL').count(), receipt_count)
+
+    def test_billed_order_cannot_remove_items(self):
+        order = self.create(items=[
+            {'product_id': self.product.pk, 'quantity': 1},
+            {'product_id': self.product.pk, 'quantity': 1},
+        ], expected_total='400.00')
+        order = self.command(order, 'bill')
+        self.assertTrue(all(not item['can_remove'] for item in order['items']))
+        response = self.post(f"{order['id']}/void/", {
+            'version': order['version'], 'item_id': order['items'][0]['id'], 'reason': 'Already billed'
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(OrderItem.objects.get(pk=order['items'][0]['id']).is_voided)
 
     def test_completed_order_cannot_reclaim_occupied_table(self):
         order = self.create(fulfillment_type='DINE_IN', table_id=self.table.pk)
