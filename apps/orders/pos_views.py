@@ -37,6 +37,19 @@ class PosOrdersView(StaffAPIView):
         return Response(mutate(branch,request.user,request.headers.get('Idempotency-Key'),'create',serializer.validated_data),status=201)
 
 
+class PosDashboardView(StaffAPIView):
+    def get(self, request):
+        from .pos_serializers import PosDashboardSerializer
+        branch = staff_branch(request)
+        serializer = PosDashboardSerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+        filters = serializer.validated_data
+        data = list_orders(branch, filters)
+        data['filters'] = {key: filters.get(key) for key in ('start_date', 'end_date', 'all_dates')}
+        data['timezone'] = 'Asia/Kathmandu'
+        return Response(data)
+
+
 class PosCustomersView(StaffAPIView):
     def get(self, request):
         from apps.customer_web.customer_selectors import matching_customers

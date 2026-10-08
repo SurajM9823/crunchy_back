@@ -138,7 +138,7 @@ class OutletLoginAPIView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED
             )
 
-        if not (user.is_staff or user.is_superuser or user.role in ('BRANCH_MANAGER', 'RESTAURANT_OWNER', 'CASHIER', 'CHEF')):
+        if not (user.is_staff or user.is_superuser or user.role in ('SUPERADMIN', 'BRANCH_MANAGER', 'RESTAURANT_OWNER', 'CASHIER', 'CHEF', 'WAITER')):
             return Response(
                 {"detail": "Access denied. Only authorized outlet staff and administrators can access this portal."},
                 status=status.HTTP_403_FORBIDDEN
@@ -149,6 +149,10 @@ class OutletLoginAPIView(APIView):
                 {"detail": "No outlet is currently assigned to this administrator account. Please contact the superadmin."},
                 status=status.HTTP_403_FORBIDDEN
             )
+
+        employee = getattr(user, 'employee_profile', None)
+        if employee and not employee.is_active:
+            return Response({'detail': 'Staff account is disabled.'}, status=status.HTTP_403_FORBIDDEN)
 
         token_data = generate_auth_tokens(user)
         return Response(token_data, status=status.HTTP_200_OK)

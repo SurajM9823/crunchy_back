@@ -98,6 +98,23 @@ class PosListSerializer(serializers.Serializer):
         return attrs
 
 
+class PosDashboardSerializer(PosListSerializer):
+    all_dates = serializers.BooleanField(default=False)
+
+    def validate(self, attrs):
+        from django.utils import timezone
+        from zoneinfo import ZoneInfo
+
+        if attrs['all_dates']:
+            if attrs.get('start_date') or attrs.get('end_date'):
+                raise serializers.ValidationError('all_dates cannot be combined with dates.')
+        else:
+            today = timezone.localdate(timezone=ZoneInfo('Asia/Kathmandu'))
+            attrs.setdefault('start_date', attrs.get('end_date', today))
+            attrs.setdefault('end_date', attrs['start_date'])
+        return super().validate(attrs)
+
+
 class PosDeleteSerializer(VersionSerializer):
     confirmation = serializers.CharField(max_length=64)
     restore_stock = serializers.BooleanField(default=False)
