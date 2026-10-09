@@ -3,6 +3,7 @@ import json
 from io import BytesIO
 from datetime import timedelta
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from django.core.cache import cache
@@ -346,6 +347,10 @@ class PostHogIntegrationTests(TestCase):
         self.assertEqual(visitor_data['unique_visitors'], 2)
         self.assertEqual(visitor_data['sessions'], 3)
         self.assertEqual(visitor_data['page_views'], 5)
+        today = timezone.localdate(timezone=ZoneInfo('Asia/Kathmandu'))
+        self.assertEqual(len(visitor_data['daily']), today.day)
+        self.assertEqual(visitor_data['daily'][0]['date'], today.replace(day=1).isoformat())
+        self.assertEqual(visitor_data['daily'][-1]['date'], today.isoformat())
         self.assertEqual(visitor_data['top_events'][0]['event'], 'add_to_cart')
         self.assertEqual(visitor_data['top_pages'][0]['path'], '/menu')
         self.assertEqual(visitor_data['funnel'], [
@@ -374,6 +379,10 @@ class PostHogIntegrationTests(TestCase):
         inactive_query = json.loads(urlopen.call_args_list[5].args[0].data)['query']['query']
         self.assertIn('HAVING last_seen < now() - INTERVAL 30 MINUTE', inactive_query)
         self.assertIn("argMaxIf(event, timestamp, event IN", inactive_query)
+        daily_query = json.loads(urlopen.call_args_list[1].args[0].data)['query']['query']
+        self.assertIn("Asia/Kathmandu", daily_query)
+        self.assertIn("timestamp >= toDateTime64(", daily_query)
+        self.assertIn("timestamp <= toDateTime64(", daily_query)
         for call in urlopen.call_args_list:
             request = call.args[0]
             self.assertIn('/api/projects/12345/query/', request.full_url)

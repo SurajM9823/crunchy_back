@@ -1,17 +1,20 @@
 import json
 import logging
-from datetime import timezone as datetime_timezone
+from datetime import timedelta, timezone as datetime_timezone
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 from django.conf import settings
 from django.core.cache import cache
 from django.db.models import Count, Sum, Q, F
+from django.utils import timezone
 from apps.orders.models import Order
 from .models import PostHogDelivery, PostHogOrderIdentity
 from .posthog_services import project_config
 from .journey_selectors import bounds
 
 logger = logging.getLogger(__name__)
+NEPAL_TIMEZONE = ZoneInfo('Asia/Kathmandu')
 
 VISITOR_ACTIONS = (
     'add_to_cart', 'remove_from_cart', 'cart_clear', 'cart_view',
@@ -108,8 +111,13 @@ def visitor_overview(branch, config, start, end):
 
     start_utc = start.astimezone(datetime_timezone.utc).strftime('%Y-%m-%d %H:%M:%S.%f')
     end_utc = end.astimezone(datetime_timezone.utc).strftime('%Y-%m-%d %H:%M:%S.%f')
+    month_now = timezone.now().astimezone(NEPAL_TIMEZONE)
+    month_start = month_now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    month_start_utc = month_start.astimezone(datetime_timezone.utc).strftime('%Y-%m-%d %H:%M:%S.%f')
+    month_now_utc = month_now.astimezone(datetime_timezone.utc).strftime('%Y-%m-%d %H:%M:%S.%f')
     scope = f"toString(properties.outlet_id) = '{branch.pk}' AND properties.authority = 'browser'"
     time_filter = f"timestamp >= toDateTime64('{start_utc}', 6, 'UTC') AND timestamp <= toDateTime64('{end_utc}', 6, 'UTC')"
+    month_time_filter = f"timestamp >= toDateTime64('{month_start_utc}', 6, 'UTC') AND timestamp <= toDateTime64('{month_now_utc}', 6, 'UTC')"
     try:
         totals = _posthog_rows(config, f"""
             SELECT
@@ -126,7 +134,7 @@ def visitor_overview(branch, config, start, end):
                 uniqExact(properties.$session_id) AS sessions,
                 count() AS page_views
             FROM events
-            WHERE {time_filter} AND {scope} AND event = '$pageview'
+            WHERE {month_time_filter} AND {scope} AND event = '$pageview'
             GROUP BY date
             ORDER BY date
         """)
@@ -200,16 +208,21 @@ def visitor_overview(branch, config, start, end):
         funnel_counts = funnel[0] if funnel else [0] * len(FUNNEL_STAGES)
         if len(funnel_counts) < len(FUNNEL_STAGES):
             raise ValueError('PostHog returned incomplete funnel metrics.')
+        daily_by_date = {
+            str(row[0]): {'date': str(row[0]), 'visitors': int(row[1] or 0), 'sessions': int(row[2] or 0), 'page_views': int(row[3] or 0)}
+            for row in daily if len(row) >= 4
+        }
+        daily_month = []
+        for day_offset in range((month_now.date() - month_start.date()).days + 1):
+            date = str(month_start.date() + timedelta(days=day_offset))
+            daily_month.append(daily_by_date.get(date, {'date': date, 'visitors': 0, 'sessions': 0, 'page_views': 0}))
         result = {
             'available': True,
             'message': '',
             'unique_visitors': int(totals[0][0] or 0),
             'sessions': int(totals[0][1] or 0),
             'page_views': int(totals[0][2] or 0),
-            'daily': [
-                {'date': str(row[0]), 'visitors': int(row[1] or 0), 'sessions': int(row[2] or 0), 'page_views': int(row[3] or 0)}
-                for row in daily if len(row) >= 4
-            ],
+            'daily': daily_month,
             'top_events': [
                 {'event': str(row[0]), 'events': int(row[1] or 0), 'visitors': int(row[2] or 0)}
                 for row in actions if len(row) >= 3
