@@ -9,6 +9,7 @@ from django.conf.urls.static import static
 from apps.restaurants.views import OrganizationAPIView
 
 urlpatterns = [
+    path('api/v1/chat/', include('apps.messaging.urls')),
     path('api/v1/daybook/', include('apps.daybook.urls')),
     path('api/v1/loyalty/', include('apps.loyalty.urls')),
     path('api/v1/customer/', include('apps.customer_web.urls')),

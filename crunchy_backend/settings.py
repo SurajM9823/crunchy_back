@@ -59,6 +59,7 @@ INSTALLED_APPS = [
     'apps.customer_web',
     'apps.loyalty',
     'apps.daybook',
+    'apps.messaging',
 ]
 
 # Temporary signup only: display a generated test code. Never an existing-account login bypass.
@@ -229,6 +230,8 @@ CELERY_TIMEZONE = 'UTC'
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 30 * 60
 CELERY_BEAT_SCHEDULE = {
+    'deliver-chat-events': {'task': 'apps.messaging.tasks.deliver_chat_events', 'schedule': 2.0},
+    'deliver-chat-push': {'task': 'apps.messaging.tasks.deliver_chat_push', 'schedule': 2.0},
     'send-posthog-events': {'task': 'apps.customer_web.tasks.send_posthog_events', 'schedule': 3.0},
     'refresh-posthog-reports': {'task': 'apps.customer_web.tasks.build_journey_reports', 'schedule': 3.0},
     'publish-daybook-outbox': {'task': 'apps.daybook.tasks.publish_daybook_events', 'schedule': 1.0},
@@ -364,3 +367,8 @@ LOGGING = {
         },
     },
 }
+
+# Guest support conversations initially route to the primary outlet.
+CHAT_GUEST_OUTLET_ID = int(os.getenv('CHAT_GUEST_OUTLET_ID', '1'))
+from corsheaders.defaults import default_headers
+CORS_ALLOW_HEADERS = list(default_headers) + ['x-chat-guest', 'idempotency-key']

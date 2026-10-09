@@ -41,3 +41,6 @@ logs/*
 !logs/.gitkeep
 *.log
 
+
+# Server-only Firebase service account credentials
+*-firebase-adminsdk-*.json
