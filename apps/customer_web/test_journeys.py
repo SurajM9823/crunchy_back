@@ -316,13 +316,17 @@ class PostHogIntegrationTests(TestCase):
         self.assertEqual(response.data['analytics']['project_url'], self.config[str(self.branch.pk)]['project_url'])
 
     @patch('apps.customer_web.posthog_selectors.urlopen')
-    def test_reporting_returns_aggregated_visitor_counts_and_filters_by_outlet(self, urlopen):
+    @patch('apps.customer_web.posthog_selectors.cache.get', return_value=None)
+    def test_reporting_returns_aggregated_visitor_counts_and_filters_by_outlet(self, cache_get, urlopen):
         from .posthog_selectors import reporting_overview
         responses = [
             {'results': [[2, 3, 5]]},
             {'results': [['2026-10-09', 2, 3, 5]]},
             {'results': [['add_to_cart', 4, 2]]},
             {'results': [['/menu', 5, 2]]},
+            {'results': [[3, 2, 1, 1, 1, 1, 0]]},
+            {'results': [['payment_method_view', 1, 1], ['add_to_cart', 1, 1]]},
+            {'results': [['login_failed', 'unsafe@value', 2, 1], ['delivery_location_error', 'location_permission', 1, 1]]},
         ]
         def response_for_query(request, timeout):
             self.assertEqual(timeout, 12)
@@ -344,11 +348,32 @@ class PostHogIntegrationTests(TestCase):
         self.assertEqual(visitor_data['page_views'], 5)
         self.assertEqual(visitor_data['top_events'][0]['event'], 'add_to_cart')
         self.assertEqual(visitor_data['top_pages'][0]['path'], '/menu')
-        self.assertEqual(urlopen.call_count, 4)
+        self.assertEqual(visitor_data['funnel'], [
+            {'step': 'Visit', 'sessions': 3},
+            {'step': 'Product viewed', 'sessions': 2},
+            {'step': 'Added to cart', 'sessions': 1},
+            {'step': 'Checkout started', 'sessions': 1},
+            {'step': 'Payment details shown', 'sessions': 1},
+            {'step': 'Receipt selected', 'sessions': 1},
+            {'step': 'Order attempted', 'sessions': 0},
+        ])
+        self.assertEqual(visitor_data['last_steps'][0]['event'], 'payment_method_view')
+        self.assertEqual(visitor_data['friction'][0]['event'], 'login_failed')
+        self.assertEqual(visitor_data['friction'][0]['category'], 'other')
+        self.assertEqual(visitor_data['friction'][1]['category'], 'location_permission')
+        self.assertIn('posthog-overview:v2:', cache_get.call_args.args[0])
+        self.assertEqual(urlopen.call_count, 7)
         action_query = json.loads(urlopen.call_args_list[2].args[0].data)['query']['query']
         self.assertIn("event IN ('add_to_cart'", action_query)
         self.assertNotIn("event != '$pageview'", action_query)
         self.assertIn('LIMIT 25', action_query)
+        funnel_query = json.loads(urlopen.call_args_list[4].args[0].data)['query']['query']
+        self.assertIn("minIf(timestamp, event = 'payment_method_view') AS payment_at", funnel_query)
+        self.assertIn("visit_at > epoch AND product_at >= visit_at AND cart_at >= product_at", funnel_query)
+        self.assertIn("AND properties.$session_id != ''", funnel_query)
+        inactive_query = json.loads(urlopen.call_args_list[5].args[0].data)['query']['query']
+        self.assertIn('HAVING last_seen < now() - INTERVAL 30 MINUTE', inactive_query)
+        self.assertIn("argMaxIf(event, timestamp, event IN", inactive_query)
         for call in urlopen.call_args_list:
             request = call.args[0]
             self.assertIn('/api/projects/12345/query/', request.full_url)

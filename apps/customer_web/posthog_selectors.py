@@ -18,12 +18,53 @@ VISITOR_ACTIONS = (
     'category_view', 'menu_view', 'product_view', 'product_detail_view',
     'product_image_view', 'product_search', 'checkout_click', 'checkout_start',
     'checkout_validation_failed', 'confirm_order_click', 'delivery_information',
-    'address_entered', 'location_selected', 'name_entered', 'phone_entered',
-    'auth_required', 'payment_method_view', 'payment_method_selected',
+    'address_entered', 'location_selected', 'map_opened', 'map_pin_selected',
+    'delivery_location_error', 'name_entered', 'phone_entered',
+    'auth_required', 'login_started', 'login_success', 'login_failed',
+    'payment_method_view', 'payment_method_selected',
     'payment_proof_uploaded', 'payment_started', 'order_submit', 'order_failed',
+    'payment_proof_rejected',
     'api_error', 'network_error', 'javascript_error', 'image_error',
     'call_click', 'whatsapp_click',
 )
+
+FUNNEL_STAGES = (
+    ('Visit', 'visit_at > epoch'),
+    ('Product viewed', 'visit_at > epoch AND product_at >= visit_at'),
+    ('Added to cart', 'visit_at > epoch AND product_at >= visit_at AND cart_at >= product_at'),
+    ('Checkout started', 'visit_at > epoch AND product_at >= visit_at AND cart_at >= product_at AND checkout_at >= cart_at'),
+    ('Payment details shown', 'visit_at > epoch AND product_at >= visit_at AND cart_at >= product_at AND checkout_at >= cart_at AND payment_at >= checkout_at'),
+    ('Receipt selected', 'visit_at > epoch AND product_at >= visit_at AND cart_at >= product_at AND checkout_at >= cart_at AND payment_at >= checkout_at AND receipt_at >= payment_at'),
+    ('Order attempted', 'visit_at > epoch AND product_at >= visit_at AND cart_at >= product_at AND checkout_at >= cart_at AND payment_at >= checkout_at AND receipt_at >= payment_at AND submit_at >= receipt_at'),
+)
+
+FUNNEL_EVENTS = tuple(
+    event
+    for event in (
+        '$pageview', 'product_view', 'product_detail_view', 'add_to_cart',
+        'checkout_start', 'payment_method_view', 'payment_proof_uploaded',
+        'order_submit',
+    )
+)
+
+LAST_STEP_EVENTS = tuple(event for event in VISITOR_ACTIONS if event not in {
+    'api_error', 'network_error', 'javascript_error', 'image_error',
+})
+
+FRICTION_EVENTS = (
+    'login_started', 'login_success', 'login_failed', 'auth_required',
+    'map_opened', 'location_selected', 'delivery_location_error',
+    'payment_method_view', 'payment_method_selected', 'payment_proof_uploaded', 'payment_proof_rejected',
+    'checkout_validation_failed', 'order_failed', 'api_error', 'network_error',
+    'javascript_error', 'image_error',
+)
+
+FRICTION_CATEGORIES = {
+    'name_missing', 'address_missing', 'table_missing', 'cart_sync',
+    'location_unavailable', 'location_invalid', 'location_permission', 'location_timeout',
+    'unsupported_type', 'file_too_large', 'empty_file',
+    'image_load', 'uncaught_exception', 'unhandled_rejection', 'network',
+}
 
 
 def _posthog_rows(config, query):
@@ -60,7 +101,7 @@ def visitor_overview(branch, config, start, end):
             'message': 'Add a read-only PostHog Personal API Key to the backend as POSTHOG_QUERY_API_KEY to show visitor charts here.',
         }
 
-    cache_key = f'posthog-overview:{branch.pk}:{config["project_url"]}:{start.isoformat()}:{end.isoformat()}'
+    cache_key = f'posthog-overview:v2:{branch.pk}:{config["project_url"]}:{start.isoformat()}:{end.isoformat()}'
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
@@ -106,8 +147,59 @@ def visitor_overview(branch, config, start, end):
             ORDER BY page_views DESC
             LIMIT 10
         """)
+        funnel = _posthog_rows(config, f"""
+            SELECT
+                {', '.join(f'countIf({condition})' for _, condition in FUNNEL_STAGES)}
+            FROM (
+                SELECT
+                    properties.$session_id AS session_id,
+                    minIf(timestamp, event = '$pageview') AS visit_at,
+                    minIf(timestamp, event IN ('product_view', 'product_detail_view')) AS product_at,
+                    minIf(timestamp, event = 'add_to_cart') AS cart_at,
+                    minIf(timestamp, event = 'checkout_start') AS checkout_at,
+                    minIf(timestamp, event = 'payment_method_view') AS payment_at,
+                    minIf(timestamp, event = 'payment_proof_uploaded') AS receipt_at,
+                    minIf(timestamp, event = 'order_submit') AS submit_at,
+                    toDateTime64('1970-01-01 00:00:00', 6, 'UTC') AS epoch
+                FROM events
+                WHERE {time_filter} AND {scope}
+                  AND event IN ({', '.join(repr(event) for event in FUNNEL_EVENTS)})
+                  AND properties.$session_id != ''
+                GROUP BY session_id
+            )
+        """)
+        last_steps = _posthog_rows(config, f"""
+            SELECT last_step, count() AS sessions, uniqExact(visitor_id) AS visitors
+            FROM (
+                SELECT
+                    properties.$session_id AS session_id,
+                    any(distinct_id) AS visitor_id,
+                    argMaxIf(event, timestamp, event IN ({', '.join(repr(event) for event in LAST_STEP_EVENTS)})) AS last_step,
+                    max(timestamp) AS last_seen
+                FROM events
+                WHERE {time_filter} AND {scope} AND properties.$session_id != ''
+                GROUP BY session_id
+                HAVING last_seen < now() - INTERVAL 30 MINUTE
+            )
+            WHERE last_step != ''
+            GROUP BY last_step
+            ORDER BY sessions DESC
+            LIMIT 15
+        """)
+        friction = _posthog_rows(config, f"""
+            SELECT event, properties.error_category AS category, count() AS events,
+                   uniqExact(properties.$session_id) AS sessions
+            FROM events
+            WHERE {time_filter} AND {scope}
+              AND event IN ({', '.join(repr(event) for event in FRICTION_EVENTS)})
+            GROUP BY event, category
+            ORDER BY events DESC
+        """)
         if not totals or len(totals[0]) < 3:
             raise ValueError('PostHog returned incomplete visitor totals.')
+        funnel_counts = funnel[0] if funnel else [0] * len(FUNNEL_STAGES)
+        if len(funnel_counts) < len(FUNNEL_STAGES):
+            raise ValueError('PostHog returned incomplete funnel metrics.')
         result = {
             'available': True,
             'message': '',
@@ -126,6 +218,23 @@ def visitor_overview(branch, config, start, end):
                 {'path': str(row[0] or '/'), 'page_views': int(row[1] or 0), 'visitors': int(row[2] or 0)}
                 for row in pages if len(row) >= 3
             ],
+            'funnel': [
+                {'step': label, 'sessions': int(funnel_counts[index] or 0)}
+                for index, (label, _) in enumerate(FUNNEL_STAGES)
+            ],
+            'last_steps': [
+                {'event': str(row[0]), 'sessions': int(row[1] or 0), 'visitors': int(row[2] or 0)}
+                for row in last_steps if len(row) >= 3
+            ],
+            'friction': [
+                {
+                    'event': str(row[0]),
+                    'category': _safe_friction_category(row[1]),
+                    'events': int(row[2] or 0),
+                    'sessions': int(row[3] or 0),
+                }
+                for row in friction if len(row) >= 4
+            ],
         }
     except HTTPError as exc:
         logger.warning('PostHog visitor query failed with HTTP %s for outlet %s', exc.code, branch.pk)
@@ -137,6 +246,18 @@ def visitor_overview(branch, config, start, end):
 
     cache.set(cache_key, result, timeout=120)
     return result
+
+
+def _safe_friction_category(value):
+    category = str(value or '')
+    if category in FRICTION_CATEGORIES or (
+        category.startswith('http_')
+        and len(category) == 8
+        and category[5:].isdigit()
+        and 400 <= int(category[5:]) <= 599
+    ):
+        return category
+    return 'other' if category else ''
 
 
 def reporting_overview(branch, filters, user):
