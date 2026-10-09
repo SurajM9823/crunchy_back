@@ -55,7 +55,7 @@ def visitor_overview(branch, config, start, end):
 
     start_utc = start.astimezone(datetime_timezone.utc).strftime('%Y-%m-%d %H:%M:%S.%f')
     end_utc = end.astimezone(datetime_timezone.utc).strftime('%Y-%m-%d %H:%M:%S.%f')
-    scope = f"properties.outlet_id = '{branch.pk}' AND properties.authority = 'browser'"
+    scope = f"toString(properties.outlet_id) = '{branch.pk}' AND properties.authority = 'browser'"
     time_filter = f"timestamp >= toDateTime64('{start_utc}', 6, 'UTC') AND timestamp <= toDateTime64('{end_utc}', 6, 'UTC')"
     try:
         totals = _posthog_rows(config, f"""

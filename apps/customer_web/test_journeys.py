@@ -349,6 +349,6 @@ class PostHogIntegrationTests(TestCase):
             request = call.args[0]
             self.assertIn('/api/projects/12345/query/', request.full_url)
             query = json.loads(request.data)['query']['query']
-            self.assertIn("properties.outlet_id = '%s'" % self.branch.pk, query)
+            self.assertIn("toString(properties.outlet_id) = '%s'" % self.branch.pk, query)
             self.assertIn("properties.authority = 'browser'", query)
             self.assertIn("'UTC'", query)
