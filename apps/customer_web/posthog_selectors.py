@@ -76,7 +76,9 @@ def _posthog_rows(config, query):
     match = re.fullmatch(r'https://(?:us|eu)\.posthog\.com/project/(\d+)/?', config['project_url'])
     if not match:
         raise ValueError('PostHog project URL is unavailable.')
-    payload = json.dumps({'query': {'kind': 'HogQLQuery', 'query': query}}).encode()
+    # This runs in the worker behind our own coalesced snapshot cache. Ask the
+    # provider to recompute too, rather than refreshing only our HTTP response.
+    payload = json.dumps({'query': {'kind': 'HogQLQuery', 'query': query}, 'refresh': 'force_blocking'}).encode()
     request = Request(
         f"{config['host'].replace('.i.posthog.com', '.posthog.com')}/api/projects/{match.group(1)}/query/",
         data=payload,
@@ -218,6 +220,7 @@ def visitor_overview(branch, config, start, end, force_refresh=False):
             daily_month.append(daily_by_date.get(date, {'date': date, 'visitors': 0, 'sessions': 0, 'page_views': 0}))
         result = {
             'available': True,
+            'updated_at': timezone.now().isoformat(),
             'message': '',
             'unique_visitors': int(totals[0][0] or 0),
             'sessions': int(totals[0][1] or 0),
@@ -273,22 +276,23 @@ def _safe_friction_category(value):
     return 'other' if category else ''
 
 
-def reporting_overview(branch, filters, user, force_refresh=False):
+def reporting_overview(branch, filters, user, force_refresh=False, visitor_metrics=None):
     start, end = bounds(filters)
     orders = Order.objects.filter(branch=branch, order_source='WEBSITE', created_at__gte=start, created_at__lte=end)
     data = orders.aggregate(orders=Count('pk'), cancelled=Count('pk', filter=Q(status='CANCELLED')),
         order_value=Sum('total_payable', filter=~Q(status='CANCELLED')),
         paid_orders=Count('pk', filter=Q(payment_status='PAID', paid_amount__gt=0, paid_amount__gte=F('total_payable'))),
         received=Sum('paid_amount'), refunded=Sum('refunded_amount'))
+    data['net_received'] = f"{(data['received'] or 0)-(data['refunded'] or 0):.2f}"
     for field in ('order_value', 'received', 'refunded'):
         data[field] = str(data[field] or 0)
-    data['net_received'] = str(sum((order.paid_amount-order.refunded_amount for order in orders), start=0))
     config = project_config(branch.pk)
     # A project link is never a substitute for authorization. Staff cannot see
     # project-wide analytics merely because they can read an outlet's sales.
     can_open = user.is_superuser or user.role in ('RESTAURANT_OWNER', 'BRANCH_MANAGER')
     delivery = PostHogDelivery.objects.filter(order__in=orders)
-    visitor_metrics = visitor_overview(branch, config, start, end, force_refresh=force_refresh)
+    if visitor_metrics is None:
+        visitor_metrics = visitor_overview(branch, config, start, end, force_refresh=force_refresh)
     return {'sales': data, 'analytics': {'provider': 'PostHog', 'configured': config['enabled'],
         'replay_enabled': config['replay'], 'project_url': config['project_url'] if can_open else '',
         'can_open': can_open, 'linked_orders': PostHogOrderIdentity.objects.filter(order__in=orders).count(),

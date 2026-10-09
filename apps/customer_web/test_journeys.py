@@ -30,8 +30,8 @@ class JourneyTests(TestCase):
     def batch(self, names, **extra):
         return {**self.identity, 'outlet_id':self.branch.pk, 'device':'MOBILE', 'browser':'Chrome', 'os':'Android',
                 'attribution':{'utm_source':'facebook', 'ad_id':'burger-video'},
-                'events':[{'event_id':str(uuid.uuid4()), 'name':name, 'timestamp':timezone.now().isoformat(),
-                           'path':'/menu?token=private', 'metadata':{}} for name in names], **extra}
+                'events':[{'event_id':str(uuid.uuid4()), 'name':name, 'timestamp':(timezone.now()+timedelta(milliseconds=index)).isoformat(),
+                           'path':'/menu?token=private', 'metadata':{}} for index,name in enumerate(names)], **extra}
 
     def send(self, body):
         response = self.client.post('/api/v1/customer/events/', body, format='json')
@@ -392,8 +392,10 @@ class PostHogIntegrationTests(TestCase):
             self.assertIn("properties.authority = 'browser'", query)
             self.assertIn("'UTC'", query)
 
+    @patch('apps.customer_web.posthog_reports.visitor_snapshot')
     @patch('apps.customer_web.posthog_selectors.reporting_overview')
-    def test_reporting_refresh_parameter_bypasses_cached_visitor_data(self, reporting_overview):
+    def test_reporting_refresh_parameter_bypasses_cached_visitor_data(self, reporting_overview, visitor_snapshot):
+        visitor_snapshot.return_value = {'available': False, 'refreshing': True}
         reporting_overview.return_value = {'analytics': {'visitors': {'available': True}}}
         response = self.client.get(
             f'/api/v1/customer/reporting-overview/?outlet_id={self.branch.pk}'
@@ -401,4 +403,40 @@ class PostHogIntegrationTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertTrue(reporting_overview.call_args.kwargs['force_refresh'])
+        self.assertTrue(visitor_snapshot.call_args.kwargs['force_refresh'])
+        self.assertTrue(reporting_overview.call_args.kwargs['visitor_metrics']['refreshing'])
+
+    @patch('apps.customer_web.posthog_selectors.visitor_overview')
+    def test_report_http_is_nonblocking_and_refreshes_keep_previous_snapshot(self, fetch):
+        from .models import JourneyReport
+        from .tasks import build_journey_reports
+        from .posthog_reports import visitor_snapshot
+        filters = {'start_date': timezone.localdate(), 'end_date': timezone.localdate()}
+        fetch.return_value = {'available': True, 'unique_visitors': 7, 'updated_at': timezone.now().isoformat()}
+        with override_settings(POSTHOG_OUTLETS=self.config, POSTHOG_QUERY_API_KEY='test'):
+            response = self.client.get(f'/api/v1/customer/reporting-overview/?outlet_id={self.branch.pk}')
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.data['analytics']['visitors']['refreshing'])
+            fetch.assert_not_called()
+            visitor_snapshot(self.branch, filters, force_refresh=True)
+            self.assertEqual(JourneyReport.objects.count(), 1)
+            build_journey_reports()
+            ready = visitor_snapshot(self.branch, filters)
+            self.assertEqual(ready['unique_visitors'], 7)
+            self.assertFalse(ready['refreshing'])
+            stale = visitor_snapshot(self.branch, filters, force_refresh=True)
+            self.assertTrue(stale['refreshing'])
+            self.assertEqual(stale['unique_visitors'], 7)
+            self.assertEqual(JourneyReport.objects.count(), 1)
+            fetch.return_value = {'available': False}
+            build_journey_reports()
+            self.assertEqual(visitor_snapshot(self.branch, filters)['unique_visitors'], 7)
+
+    @patch('apps.customer_web.posthog_selectors.urlopen')
+    def test_query_requests_provider_refresh(self, urlopen):
+        from .posthog_selectors import _posthog_rows
+        response = BytesIO(b'{"results": [[1]]}'); response.status = 200
+        urlopen.return_value = response
+        with override_settings(POSTHOG_QUERY_API_KEY='test'):
+            _posthog_rows(self.config[str(self.branch.pk)], 'SELECT 1')
+        self.assertEqual(json.loads(urlopen.call_args.args[0].data)['refresh'], 'force_blocking')

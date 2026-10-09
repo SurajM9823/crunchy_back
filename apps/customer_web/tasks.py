@@ -135,7 +135,16 @@ def build_journey_reports():
             if report.status!='PENDING': continue
             report.status='RUNNING';report.attempts+=1;report.completed_at=timezone.now();report.save()
         try:
-            if '_question' in report.filters:
+            if report.filters.get('_posthog'):
+                from .posthog_selectors import visitor_overview
+                from .posthog_services import project_config
+                from .journey_selectors import bounds
+                serializer=ReportFilters(data=report.filters);serializer.is_valid(raise_exception=True)
+                start,end=bounds(serializer.validated_data)
+                result=visitor_overview(report.branch,project_config(report.branch_id),start,end,force_refresh=True)
+                if not result.get('available'):
+                    raise ValueError('PostHog query unavailable')
+            elif '_question' in report.filters:
                 from .journey_diagnostics import analyst_answer
                 source=JourneyReport.objects.get(pk=report.filters['_report_id'],branch=report.branch,status='READY')
                 result=analyst_answer(source.result,report.filters['_question'],use_ai=True)
@@ -150,7 +159,7 @@ def build_journey_reports():
         report.completed_at=timezone.now();report.save()
         try:
             async_to_sync(get_channel_layer().group_send)(f'customer_accounts_{report.branch_id}',{
-                'type':'account_event','event_type':'ANALYTICS_READY','event_id':str(report.pk),'outlet_id':report.branch_id,
+                'type':'account_event','event_type':'ANALYTICS_READY','event_id':f'{report.pk}:{report.completed_at.isoformat()}','outlet_id':report.branch_id,
                 'timestamp':report.completed_at.isoformat()})
         except Exception:
             pass  # Existing WebSocket heartbeat compares durable report revision after recovery.

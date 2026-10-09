@@ -34,7 +34,10 @@ class AudienceRevisionConsumer(AsyncJsonWebsocketConsumer):
         events = JourneyEvent.objects.filter(session__branch_id=self.outlet_id).aggregate(last=Max('received_at'))
         reports = JourneyReport.objects.filter(branch_id=self.outlet_id).aggregate(last=Max('completed_at'))
         deliveries = PostHogDelivery.objects.filter(order__branch_id=self.outlet_id).aggregate(last=Max('next_attempt_at'), sent=Max('sent_at'), count=Count('pk'))
-        return hashlib.sha256(repr((visits, contacts, orders, events, reports, deliveries)).encode()).hexdigest()
+        # External PostHog ingestion cannot publish into our channel. Advance a
+        # revision once a minute so connected dashboards request a fresh snapshot.
+        refresh_window = int(time.time() // 60)
+        return hashlib.sha256(repr((visits, contacts, orders, events, reports, deliveries, refresh_window)).encode()).hexdigest()
 
     async def receive_json(self, content, **kwargs):
         if content.get('type') == 'ping':

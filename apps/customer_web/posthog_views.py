@@ -22,13 +22,15 @@ class TrackingConfigView(WebsiteAnalyticsView):
 class ReportingOverviewView(WebsiteAnalyticsView):
     def get(self, request):
         from .posthog_selectors import reporting_overview
+        from .posthog_reports import visitor_snapshot
         from .journey_selectors import ReportFilters
         branch = audience_branch(request)
         filters = ReportFilters(data=request.query_params)
         filters.is_valid(raise_exception=True)
         force_refresh = request.query_params.get('refresh') not in (None, '', '0', 'false')
         response = Response(reporting_overview(
-            branch, filters.validated_data, request.user, force_refresh=force_refresh,
+            branch, filters.validated_data, request.user,
+            visitor_metrics=visitor_snapshot(branch, filters.validated_data, force_refresh=force_refresh),
         ))
         response['Cache-Control'] = 'private, no-store, no-cache, max-age=0, must-revalidate'
         return response
