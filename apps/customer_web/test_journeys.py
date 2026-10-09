@@ -1,5 +1,8 @@
 import uuid
+import json
+from io import BytesIO
 from datetime import timedelta
+from unittest.mock import patch
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from django.core.cache import cache
@@ -198,6 +201,7 @@ class JourneyTests(TestCase):
 @override_settings(WEBSITE_ANALYTICS_PROVIDER='posthog')
 class PostHogIntegrationTests(TestCase):
     def setUp(self):
+        cache.clear()
         self.owner = User.objects.create_user(username='posthog-owner', role='RESTAURANT_OWNER')
         restaurant = Restaurant.objects.create(name='PostHog', admin=self.owner)
         self.owner.restaurant = restaurant
@@ -262,6 +266,18 @@ class PostHogIntegrationTests(TestCase):
         response = self.client.post('/api/v1/customer/events/', {}, format='json')
         self.assertEqual(response.status_code, 410)
 
+    @patch('apps.customer_web.posthog_selectors.urlopen')
+    def test_reporting_explains_when_server_query_key_is_not_configured(self, urlopen):
+        from .posthog_selectors import reporting_overview
+        filters = {'start_date': timezone.localdate(), 'end_date': timezone.localdate()}
+
+        with override_settings(POSTHOG_OUTLETS=self.config, POSTHOG_QUERY_API_KEY=''):
+            result = reporting_overview(self.branch, filters, self.owner)
+
+        self.assertFalse(result['analytics']['visitors']['available'])
+        self.assertIn('POSTHOG_QUERY_API_KEY', result['analytics']['visitors']['message'])
+        urlopen.assert_not_called()
+
     def test_reporting_keeps_order_value_and_verified_money_in_separate_scopes(self):
         from decimal import Decimal
         from apps.orders.models import Order
@@ -298,3 +314,41 @@ class PostHogIntegrationTests(TestCase):
         self.assertEqual(response.data['sales']['refunded'], '20')
         self.assertEqual(response.data['sales']['net_received'], '230.00')
         self.assertEqual(response.data['analytics']['project_url'], self.config[str(self.branch.pk)]['project_url'])
+
+    @patch('apps.customer_web.posthog_selectors.urlopen')
+    def test_reporting_returns_aggregated_visitor_counts_and_filters_by_outlet(self, urlopen):
+        from .posthog_selectors import reporting_overview
+        responses = [
+            {'results': [[2, 3, 5]]},
+            {'results': [['2026-10-09', 2, 3, 5]]},
+            {'results': [['add_to_cart', 4, 2]]},
+            {'results': [['/menu', 5, 2]]},
+        ]
+        def response_for_query(request, timeout):
+            self.assertEqual(timeout, 12)
+            self.assertIn('/api/projects/12345/query/', request.full_url)
+            response = BytesIO(json.dumps(responses.pop(0)).encode())
+            response.status = 200
+            return response
+
+        urlopen.side_effect = response_for_query
+        filters = {'start_date': timezone.localdate(), 'end_date': timezone.localdate()}
+
+        with override_settings(POSTHOG_OUTLETS=self.config, POSTHOG_QUERY_API_KEY='phx_read_only_test_key'):
+            result = reporting_overview(self.branch, filters, self.owner)
+
+        visitor_data = result['analytics']['visitors']
+        self.assertTrue(visitor_data['available'])
+        self.assertEqual(visitor_data['unique_visitors'], 2)
+        self.assertEqual(visitor_data['sessions'], 3)
+        self.assertEqual(visitor_data['page_views'], 5)
+        self.assertEqual(visitor_data['top_events'][0]['event'], 'add_to_cart')
+        self.assertEqual(visitor_data['top_pages'][0]['path'], '/menu')
+        self.assertEqual(urlopen.call_count, 4)
+        for call in urlopen.call_args_list:
+            request = call.args[0]
+            self.assertIn('/api/projects/12345/query/', request.full_url)
+            query = json.loads(request.data)['query']['query']
+            self.assertIn("properties.outlet_id = '%s'" % self.branch.pk, query)
+            self.assertIn("properties.authority = 'browser'", query)
+            self.assertIn("'UTC'", query)

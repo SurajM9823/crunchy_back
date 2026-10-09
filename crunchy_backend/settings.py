@@ -248,6 +248,8 @@ ANALYTICS_OPENAI_MODEL = os.getenv('ANALYTICS_OPENAI_MODEL', '')
 # One active visitor analytics provider. Legacy data is retained for archive access.
 WEBSITE_ANALYTICS_PROVIDER = 'posthog'
 POSTHOG_OUTLETS = json.loads(os.getenv('POSTHOG_OUTLETS', '{}'))
+# Optional server-only Personal API Key with read access to the configured PostHog project.
+POSTHOG_QUERY_API_KEY = os.getenv('POSTHOG_QUERY_API_KEY', '')
 
 # Redis Cache Configuration
 CACHES = {
@@ -360,4 +362,3 @@ LOGGING = {
         },
     },
 }
-
