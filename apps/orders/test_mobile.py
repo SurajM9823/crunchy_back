@@ -18,6 +18,39 @@ class MobilePortalTests(TestCase):
     setUp = test_pos.PosWorkflowTests.setUp
     path = test_pos.PosWorkflowTests.path
     post = test_pos.PosWorkflowTests.post
+
+    @override_settings(FIREBASE_PROJECT_ID='test-project')
+    @patch('firebase_admin.messaging.send')
+    @patch('firebase_admin.get_app')
+    def test_fcm_payload_has_valid_expiry_and_recipient(self, get_app, send):
+        from .push_notifications import send_new_order_push
+        from firebase_admin import messaging
+        send_new_order_push('test-token', 'event', 1, 'W-01', 2, 3)
+        payload = messaging._MessagingService.encode_message(send.call_args.args[0])
+        self.assertEqual(payload['android']['ttl'], '3600s')
+        self.assertEqual(payload['android']['priority'], 'high')
+        self.assertEqual(payload['data']['user_id'], '3')
+        self.assertEqual(payload['data']['outlet_id'], '2')
+        self.assertNotIn('notification', payload)  # App applies authorization before display.
+
+    def test_invalid_device_detection_uses_firebase_exception_types(self):
+        from firebase_admin import messaging
+        from .push_notifications import is_unregistered_device_error
+        self.assertTrue(is_unregistered_device_error(messaging.UnregisteredError('expired')))
+        self.assertTrue(is_unregistered_device_error(messaging.SenderIdMismatchError('wrong project')))
+        self.assertFalse(is_unregistered_device_error(RuntimeError('temporary')))
+
+    @patch('apps.orders.push_notifications.send_new_order_push', side_effect=RuntimeError('provider unavailable'))
+    def test_push_retries_are_bounded(self, send):
+        self.create()
+        MobilePushDevice.objects.create(user=self.manager, branch=self.branch, token='retry-token')
+        for _ in range(6):
+            OrderPushDelivery.objects.update(next_attempt_at=datetime(2000,1,1,tzinfo=timezone.utc))
+            send_order_push_notifications()
+        self.assertEqual(send.call_count, 4)
+        delivery=OrderPushDelivery.objects.get()
+        self.assertIsNotNone(delivery.sent_at)
+        self.assertIn('not delivered', delivery.last_error)
     create = test_pos.PosWorkflowTests.create
 
     def test_dashboard_defaults_to_nepal_today_and_supports_history(self):

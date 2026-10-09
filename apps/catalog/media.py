@@ -9,11 +9,11 @@ from rest_framework.exceptions import ValidationError
 
 def store_menu_image(upload, restaurant_id):
     if not upload or upload.size > 5 * 1024 * 1024:
-        raise ValidationError({'image': 'Choose a JPEG, PNG or WebP image of at most 5 MB.'})
+        raise ValidationError({'image': 'Choose a JPEG, PNG, WebP or AVIF image of at most 5 MB.'})
     content = upload.read()
     try:
         with Image.open(BytesIO(content)) as img:
-            extension = {'JPEG': 'jpg', 'PNG': 'png', 'WEBP': 'webp'}.get(img.format)
+            extension = {'JPEG': 'jpg', 'PNG': 'png', 'WEBP': 'webp', 'AVIF': 'avif'}.get(img.format)
             if not extension or img.width * img.height > 20000000:
                 raise ValueError('Unsupported image format or dimensions.')
             img.verify()

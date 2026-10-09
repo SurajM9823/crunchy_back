@@ -1,7 +1,8 @@
 from django.conf import settings
+from datetime import timedelta
 
 
-def send_new_order_push(token, event_id, order_id, order_number, outlet_id):
+def send_new_order_push(token, event_id, order_id, order_number, outlet_id, user_id):
     import firebase_admin
     from firebase_admin import credentials, messaging
 
@@ -25,14 +26,18 @@ def send_new_order_push(token, event_id, order_id, order_number, outlet_id):
             'order_id': str(order_id),
             'order_number': str(order_number),
             'outlet_id': str(outlet_id),
+            'user_id': str(user_id),
         },
-        android=messaging.AndroidConfig(priority='high', ttl=60 * 60 * 1000),
+        android=messaging.AndroidConfig(priority='high', ttl=timedelta(hours=1)),
     )
     return messaging.send(message, app=app)
 
 
 def is_unregistered_device_error(error):
+    from firebase_admin import messaging
+    if isinstance(error, (messaging.UnregisteredError, messaging.SenderIdMismatchError)):
+        return True
     code = getattr(error, 'code', '')
     if callable(code):
         code = code()
-    return str(code).upper().endswith(('UNREGISTERED', 'SENDER_ID_MISMATCH'))
+    return str(code).upper().replace('-', '_').endswith(('UNREGISTERED', 'SENDER_ID_MISMATCH'))

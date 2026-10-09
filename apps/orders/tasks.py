@@ -128,6 +128,13 @@ def send_order_push_notifications():
             )
             if delivery is None or delivery.sent_at is not None:
                 continue
+            if delivery.next_attempt_at > timezone.now():
+                continue
+            if delivery.attempts >= 4 or delivery.event.created_at < timezone.now()-timedelta(hours=1):
+                delivery.sent_at = timezone.now()
+                delivery.last_error = 'Alert expired or retry limit reached; not delivered.'
+                delivery.save(update_fields=['sent_at', 'last_error'])
+                continue
             if (
                 not delivery.device.active
                 or delivery.device.user_id != delivery.user_id
@@ -153,6 +160,7 @@ def send_order_push_notifications():
                     order.pk,
                     order.order_number,
                     delivery.event.branch_id,
+                    delivery.user_id,
                 )
             except Exception as exc:
                 if is_unregistered_device_error(exc):
@@ -164,11 +172,14 @@ def send_order_push_notifications():
 
                 delivery.attempts += 1
                 delivery.next_attempt_at = timezone.now() + timedelta(
-                    seconds=min(300, 2 ** min(delivery.attempts, 8))
+                    seconds=60 * 2 ** min(delivery.attempts-1, 3)
                 )
-                delivery.last_error = str(exc).replace(delivery.device.token, '[redacted]')[:1000]
-                delivery.save(update_fields=['attempts', 'next_attempt_at', 'last_error'])
-                logger.exception('Could not send new-order push for outbox event %s', delivery.event_id)
+                delivery.last_error = type(exc).__name__
+                if delivery.attempts >= 4:
+                    delivery.sent_at = timezone.now()
+                    delivery.last_error += ': retry limit reached; not delivered'
+                delivery.save(update_fields=['attempts', 'next_attempt_at', 'last_error', 'sent_at'])
+                logger.warning('Order push failed for event %s (%s)', delivery.event_id, type(exc).__name__)
                 continue
 
             delivery.sent_at = timezone.now()
