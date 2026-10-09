@@ -81,12 +81,15 @@ def list_orders(branch, filters):
     if filters.get('status', 'ALL') != 'ALL': qs = qs.filter(status=filters['status'])
     # Aggregate over a deduplicated ID subquery, never fan out across item/payment joins.
     base = Order.objects.filter(pk__in=qs.values('pk'))
-    sums = base.exclude(status='CANCELLED').aggregate(gross=Sum('subtotal'), discount=Sum('discount_amount'), final=Sum('total_payable'), paid=Sum('paid_amount'), credit=Sum('credit_amount'))
+    active_base = base.exclude(status='CANCELLED')
+    sums = active_base.aggregate(gross=Sum('subtotal'), discount=Sum('discount_amount'), final=Sum('total_payable'), paid=Sum('paid_amount'), credit=Sum('credit_amount'))
     sums['refunded'] = base.aggregate(v=Sum('refunded_amount'))['v']
     summary = {k: str(v or Decimal('0.00')) for k, v in sums.items()}
     summary['due'] = str((sums['final'] or 0) - (sums['paid'] or 0))
+    summary['credit_count'] = active_base.filter(credit_amount__gt=0).count()
+    summary['refund_void_count'] = base.filter(refunded_amount__gt=0).count()
     from apps.payments.models import PaymentTransaction
-    summary['methods'] = {r['payment_method']: str(r['amount']) for r in PaymentTransaction.objects.filter(order_id__in=base.values('pk'), status='SUCCESS').order_by().values('payment_method').annotate(amount=Sum('amount'))}
+    summary['methods'] = {r['payment_method']: str(r['amount']) for r in PaymentTransaction.objects.filter(order_id__in=active_base.values('pk'), status='SUCCESS').order_by().values('payment_method').annotate(amount=Sum('amount'))}
     count = base.count()
     size = filters.get('page_size',25)
     page = filters.get('page',1)

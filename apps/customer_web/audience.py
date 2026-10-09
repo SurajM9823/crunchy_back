@@ -58,6 +58,9 @@ class WebsiteVisitView(APIView):
     throttle_classes = [VisitThrottle]
 
     def post(self, request):
+        from django.conf import settings
+        if settings.WEBSITE_ANALYTICS_PROVIDER == 'posthog' and request.data.get('channel', 'WEBSITE') == 'WEBSITE':
+            return Response({'detail':'Website analytics has moved to PostHog.'}, status=410)
         serializer = VisitInput(data=request.data)
         serializer.is_valid(raise_exception=True)
         record_visit(serializer.validated_data)

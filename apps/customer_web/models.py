@@ -101,6 +101,99 @@ class WebsiteVisit(models.Model):
         indexes = [models.Index(fields=['branch', 'created_at'], name='website_visit_branch_date')]
 
 
+class JourneySession(models.Model):
+    """Anonymous browser sessions. Never store contact details or precise locations."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    branch = models.ForeignKey('restaurants.Branch', on_delete=models.CASCADE)
+    session_hash = models.CharField(max_length=64)
+    visitor_hash = models.CharField(max_length=64)
+    first_seen = models.DateTimeField(default=timezone.now)
+    last_seen = models.DateTimeField(default=timezone.now)
+    landing_path = models.CharField(max_length=200)
+    device = models.CharField(max_length=16, default='UNKNOWN')
+    browser = models.CharField(max_length=24, default='Unknown')
+    os = models.CharField(max_length=24, default='Unknown')
+    network = models.CharField(max_length=16, blank=True)
+    returning = models.BooleanField(default=False)
+    first_touch = models.JSONField(default=dict)
+    session_touch = models.JSONField(default=dict)
+    last_touch = models.JSONField(default=dict)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['branch', 'session_hash'], name='journey_session_scope')]
+        indexes = [models.Index(fields=['branch', '-first_seen'], name='journey_branch_date'),
+                   models.Index(fields=['branch', 'visitor_hash'], name='journey_visitor')]
+
+
+class JourneyEvent(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(JourneySession, on_delete=models.CASCADE, related_name='events')
+    name = models.CharField(max_length=48)
+    occurred_at = models.DateTimeField(default=timezone.now)
+    received_at = models.DateTimeField(default=timezone.now)
+    path = models.CharField(max_length=200)
+    metadata = models.JSONField(default=dict)
+    trusted = models.BooleanField(default=False)
+    order = models.ForeignKey('orders.Order', null=True, blank=True, on_delete=models.SET_NULL)
+
+    class Meta:
+        indexes = [models.Index(fields=['session', 'occurred_at'], name='journey_event_time'),
+                   models.Index(fields=['name', 'received_at'], name='journey_event_name')]
+        constraints = [models.UniqueConstraint(fields=['order', 'name'], condition=models.Q(trusted=True, order__isnull=False), name='journey_order_event_once')]
+
+
+class PostHogOrderIdentity(models.Model):
+    order = models.OneToOneField('orders.Order', on_delete=models.CASCADE)
+    visitor_id = models.UUIDField()
+    session_id = models.UUIDField()
+    created_at = models.DateTimeField(default=timezone.now)
+
+
+class PostHogDelivery(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    order = models.ForeignKey('orders.Order', on_delete=models.CASCADE)
+    event = models.CharField(max_length=48)
+    payload = models.JSONField()
+    project_token = models.CharField(max_length=200)
+    api_host = models.URLField()
+    status = models.CharField(max_length=12, default='PENDING')
+    attempts = models.PositiveSmallIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(default=timezone.now, db_index=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    sent_at = models.DateTimeField(null=True)
+    last_error = models.CharField(max_length=80, blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['order', 'event'], name='posthog_order_event_once')]
+
+
+class JourneyReport(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    branch = models.ForeignKey('restaurants.Branch', on_delete=models.CASCADE)
+    key = models.CharField(max_length=64, unique=True)
+    filters = models.JSONField(default=dict)
+    status = models.CharField(max_length=12, default='PENDING')
+    result = models.JSONField(default=dict)
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+    completed_at = models.DateTimeField(null=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
+
+
+class AdMetric(models.Model):
+    branch = models.ForeignKey('restaurants.Branch', on_delete=models.CASCADE)
+    date = models.DateField()
+    source = models.CharField(max_length=40, default='facebook')
+    campaign_id = models.CharField(max_length=120, blank=True)
+    adset_id = models.CharField(max_length=120, blank=True)
+    ad_id = models.CharField(max_length=120)
+    impressions = models.PositiveIntegerField(default=0)
+    clicks = models.PositiveIntegerField(default=0)
+    spend = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['branch', 'date', 'source', 'ad_id'], name='journey_ad_daily')]
+
+
 class CustomerContact(models.Model):
     branch = models.ForeignKey('restaurants.Branch', on_delete=models.CASCADE)
     phone = models.CharField(max_length=32, blank=True)

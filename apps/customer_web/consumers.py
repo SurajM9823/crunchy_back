@@ -27,11 +27,14 @@ class AudienceRevisionConsumer(AsyncJsonWebsocketConsumer):
     def revision(self):
         from django.db.models import Max, Count
         from apps.orders.models import Order
-        from .models import WebsiteVisit, CustomerContact
+        from .models import WebsiteVisit, CustomerContact, JourneyEvent, JourneyReport, PostHogDelivery
         visits = WebsiteVisit.objects.filter(branch_id=self.outlet_id).aggregate(last=Max('created_at'))
         contacts = CustomerContact.objects.filter(branch_id=self.outlet_id).aggregate(last=Max('last_seen'))
         orders = Order.objects.filter(branch_id=self.outlet_id).aggregate(last=Max('updated_at'), count=Count('pk'))
-        return hashlib.sha256(repr((visits, contacts, orders)).encode()).hexdigest()
+        events = JourneyEvent.objects.filter(session__branch_id=self.outlet_id).aggregate(last=Max('received_at'))
+        reports = JourneyReport.objects.filter(branch_id=self.outlet_id).aggregate(last=Max('completed_at'))
+        deliveries = PostHogDelivery.objects.filter(order__branch_id=self.outlet_id).aggregate(last=Max('next_attempt_at'), sent=Max('sent_at'), count=Count('pk'))
+        return hashlib.sha256(repr((visits, contacts, orders, events, reports, deliveries)).encode()).hexdigest()
 
     async def receive_json(self, content, **kwargs):
         if content.get('type') == 'ping':

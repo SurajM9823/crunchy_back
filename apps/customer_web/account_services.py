@@ -56,6 +56,9 @@ def receive_customer_payment(branch, actor, contact_id, key, data):
         payment.save(update_fields=['raw_response'])
         order.version += 1
         order.save()
+        if order.order_source == 'WEBSITE':
+            from .journey_services import sync_order_outcomes
+            sync_order_outcomes(order)
         audit(order, actor, order.status, f'Customer receipt #{collection.pk}: {applied}')
         saved_receipt = receipt(order, 'BILL', sequence)
         DaybookEntry.objects.create(branch=branch, date=data['date'], direction='IN', amount=applied,

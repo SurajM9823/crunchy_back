@@ -80,6 +80,103 @@ def publish_pos_events():
             event.save()
 
 
+@shared_task
+def send_order_push_notifications():
+    from .models import MobilePushDevice, OrderPushDelivery
+    from .pos_access import can_access
+    from .push_notifications import is_unregistered_device_error, send_new_order_push
+
+    pending_events = list(
+        OrderOutboxEvent.objects.filter(
+            event_type='ORDER_CREATE',
+            push_dispatched_at__isnull=True,
+        ).order_by('created_at').values_list('pk', flat=True)[:100]
+    )
+    for event_id in pending_events:
+        with transaction.atomic():
+            event = OrderOutboxEvent.objects.select_for_update().select_related('order').filter(pk=event_id).first()
+            if event is None or event.push_dispatched_at is not None:
+                continue
+
+            devices = MobilePushDevice.objects.filter(
+                branch_id=event.branch_id,
+                active=True,
+            ).select_related('user', 'branch')
+            eligible_devices = [device for device in devices if can_access(device.user, device.branch, 'read')]
+            OrderPushDelivery.objects.bulk_create(
+                [OrderPushDelivery(event=event, device=device, user=device.user) for device in eligible_devices],
+                ignore_conflicts=True,
+            )
+            event.push_dispatched_at = timezone.now()
+            event.save(update_fields=['push_dispatched_at'])
+
+    delivery_ids = list(
+        OrderPushDelivery.objects.filter(
+            sent_at__isnull=True,
+            next_attempt_at__lte=timezone.now(),
+            event__order__isnull=False,
+            event__event_type='ORDER_CREATE',
+        ).order_by('event__created_at').values_list('pk', flat=True)[:500]
+    )
+    for delivery_id in delivery_ids:
+        with transaction.atomic():
+            delivery = (
+                OrderPushDelivery.objects.select_for_update()
+                .select_related('device', 'event__order', 'user', 'device__branch')
+                .filter(pk=delivery_id)
+                .first()
+            )
+            if delivery is None or delivery.sent_at is not None:
+                continue
+            if (
+                not delivery.device.active
+                or delivery.device.user_id != delivery.user_id
+                or delivery.device.branch_id != delivery.event.branch_id
+                or not can_access(delivery.user, delivery.device.branch, 'read')
+            ):
+                delivery.sent_at = timezone.now()
+                delivery.last_error = 'Device is no longer authorized for this outlet.'
+                delivery.save(update_fields=['sent_at', 'last_error'])
+                continue
+
+            order = delivery.event.order
+            if order is None:
+                delivery.sent_at = timezone.now()
+                delivery.last_error = 'Order was deleted before its alert could be sent.'
+                delivery.save(update_fields=['sent_at', 'last_error'])
+                continue
+
+            try:
+                send_new_order_push(
+                    delivery.device.token,
+                    delivery.event_id,
+                    order.pk,
+                    order.order_number,
+                    delivery.event.branch_id,
+                )
+            except Exception as exc:
+                if is_unregistered_device_error(exc):
+                    MobilePushDevice.objects.filter(pk=delivery.device_id).update(active=False)
+                    delivery.sent_at = timezone.now()
+                    delivery.last_error = 'Firebase marked this device token as invalid.'
+                    delivery.save(update_fields=['sent_at', 'last_error'])
+                    continue
+
+                delivery.attempts += 1
+                delivery.next_attempt_at = timezone.now() + timedelta(
+                    seconds=min(300, 2 ** min(delivery.attempts, 8))
+                )
+                delivery.last_error = str(exc).replace(delivery.device.token, '[redacted]')[:1000]
+                delivery.save(update_fields=['attempts', 'next_attempt_at', 'last_error'])
+                logger.exception('Could not send new-order push for outbox event %s', delivery.event_id)
+                continue
+
+            delivery.sent_at = timezone.now()
+            delivery.attempts += 1
+            delivery.last_error = ''
+            delivery.save(update_fields=['sent_at', 'attempts', 'last_error'])
+
+
 def publish_deleted_order(layer, event):
     order_id = event.payload['aggregate_id']
     envelope = {'event_id': str(event.pk), 'event_type': 'ORDER_DELETED',

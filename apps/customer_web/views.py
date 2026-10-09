@@ -131,6 +131,8 @@ class CheckoutMetaView(APIView):
 
 
 class CheckoutInput(serializers.Serializer):
+    from .journey_schema import IdentityInput
+    analytics_context = IdentityInput(required=False, allow_null=True)
     outlet_id = serializers.IntegerField(min_value=1)
     items = PosLineSerializer(many=True, allow_empty=False, max_length=100)
     cart_line_ids = serializers.ListField(child=serializers.CharField(max_length=120), max_length=100, required=False, default=list)
@@ -202,6 +204,7 @@ class CheckoutView(CustomerView):
         serializer = CheckoutInput(data=payload)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        analytics_context = data.pop('analytics_context', None)
         proof = serializers.ImageField().run_validation(request.FILES.get('receipt'))
         if proof.size > 5*1024*1024 or proof.image.format not in ('PNG','JPEG','WEBP'):
             raise ValidationError('Upload a JPEG, PNG, or WebP receipt smaller than 5 MB.')
@@ -263,6 +266,8 @@ class CheckoutView(CustomerView):
                 table.save(update_fields=['active_session_id'])
             link = CustomerOrder.objects.create(user=request.user, order=order, request_key=key, fingerprint=fingerprint,
                 receipt_image=content, receipt_type=proof.content_type, tip=data['tip'], items_payload=data['items'], delivery_location=delivery_location)
+            from .journey_services import attach_order
+            attach_order(order, analytics_context)
             services.consume_cart(request.user, branch, data['cart_line_ids'], data['items'])
             audit(order, request.user, '', 'Customer QR receipt submitted; payment verification pending')
             receipt(order, 'TOKEN', sequence)

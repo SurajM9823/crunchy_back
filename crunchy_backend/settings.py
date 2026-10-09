@@ -4,6 +4,7 @@ Generated for Restaurant Management System (RMS).
 """
 
 import os
+import json
 from pathlib import Path
 from datetime import timedelta
 from dotenv import load_dotenv
@@ -228,12 +229,25 @@ CELERY_TIMEZONE = 'UTC'
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 30 * 60
 CELERY_BEAT_SCHEDULE = {
+    'send-posthog-events': {'task': 'apps.customer_web.tasks.send_posthog_events', 'schedule': 3.0},
     'publish-daybook-outbox': {'task': 'apps.daybook.tasks.publish_daybook_events', 'schedule': 1.0},
     'prune-website-visits': {'task': 'apps.customer_web.tasks.prune_website_visits', 'schedule': 86400.0},
     'send-customer-sms': {'task': 'apps.customer_web.tasks.send_pending_sms', 'schedule': 10.0},
     'publish-pos-outbox': {'task': 'apps.orders.tasks.publish_pos_events', 'schedule': 1.0},
+    'send-order-push-notifications': {'task': 'apps.orders.tasks.send_order_push_notifications', 'schedule': 5.0},
     'publish-menu-outbox': {'task': 'apps.catalog.tasks.publish_menu_events', 'schedule': 1.0},
 }
+
+# Push messages are sent through Firebase Admin using Application Default Credentials.
+FIREBASE_PROJECT_ID = os.getenv('FIREBASE_PROJECT_ID', '')
+
+# Optional server-only analytics analyst. No default model or secret is shipped to the browser.
+ANALYTICS_OPENAI_API_KEY = os.getenv('ANALYTICS_OPENAI_API_KEY', '')
+ANALYTICS_OPENAI_MODEL = os.getenv('ANALYTICS_OPENAI_MODEL', '')
+
+# One active visitor analytics provider. Legacy data is retained for archive access.
+WEBSITE_ANALYTICS_PROVIDER = 'posthog'
+POSTHOG_OUTLETS = json.loads(os.getenv('POSTHOG_OUTLETS', '{}'))
 
 # Redis Cache Configuration
 CACHES = {
@@ -346,5 +360,4 @@ LOGGING = {
         },
     },
 }
-
 

@@ -313,10 +313,38 @@ class OrderOutboxEvent(models.Model):
     attempts = models.PositiveIntegerField(default=0)
     next_attempt_at = models.DateTimeField(default=timezone.now)
     last_error = models.TextField(blank=True, default='')
+    push_dispatched_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         indexes = [models.Index(fields=['published_at', 'next_attempt_at'], name='pos_outbox_pending_idx'),
                    models.Index(fields=['branch','-created_at'], name='pos_outbox_branch_idx')]
+
+
+class MobilePushDevice(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='mobile_push_devices')
+    branch = models.ForeignKey('restaurants.Branch', on_delete=models.CASCADE, related_name='mobile_push_devices')
+    token = models.TextField(unique=True)
+    platform = models.CharField(max_length=16, default='android')
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [models.Index(fields=['branch', 'active'], name='push_device_branch_active_idx')]
+
+
+class OrderPushDelivery(models.Model):
+    event = models.ForeignKey(OrderOutboxEvent, on_delete=models.CASCADE, related_name='push_deliveries')
+    device = models.ForeignKey(MobilePushDevice, on_delete=models.CASCADE, related_name='order_deliveries')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='order_push_deliveries')
+    sent_at = models.DateTimeField(null=True, blank=True)
+    attempts = models.PositiveIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(default=timezone.now)
+    last_error = models.TextField(blank=True, default='')
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['event', 'device'], name='order_push_delivery_unique')]
+        indexes = [models.Index(fields=['sent_at', 'next_attempt_at'], name='order_push_pending_idx')]
 
 
 class PosReceipt(models.Model):
