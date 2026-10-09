@@ -26,4 +26,5 @@ class ReportingOverviewView(WebsiteAnalyticsView):
         branch = audience_branch(request)
         filters = ReportFilters(data=request.query_params)
         filters.is_valid(raise_exception=True)
-        return Response(reporting_overview(branch, filters.validated_data, request.user))
+        force_refresh = request.query_params.get('refresh') not in (None, '', '0', 'false')
+        return Response(reporting_overview(branch, filters.validated_data, request.user, force_refresh=force_refresh))

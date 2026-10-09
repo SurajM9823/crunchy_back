@@ -317,7 +317,7 @@ class PostHogIntegrationTests(TestCase):
         self.assertEqual(response.data['analytics']['project_url'], self.config[str(self.branch.pk)]['project_url'])
 
     @patch('apps.customer_web.posthog_selectors.urlopen')
-    @patch('apps.customer_web.posthog_selectors.cache.get', return_value=None)
+    @patch('apps.customer_web.posthog_selectors.cache.get')
     def test_reporting_returns_aggregated_visitor_counts_and_filters_by_outlet(self, cache_get, urlopen):
         from .posthog_selectors import reporting_overview
         responses = [
@@ -340,7 +340,7 @@ class PostHogIntegrationTests(TestCase):
         filters = {'start_date': timezone.localdate(), 'end_date': timezone.localdate()}
 
         with override_settings(POSTHOG_OUTLETS=self.config, POSTHOG_QUERY_API_KEY='phx_read_only_test_key'):
-            result = reporting_overview(self.branch, filters, self.owner)
+            result = reporting_overview(self.branch, filters, self.owner, force_refresh=True)
 
         visitor_data = result['analytics']['visitors']
         self.assertTrue(visitor_data['available'])
@@ -366,7 +366,7 @@ class PostHogIntegrationTests(TestCase):
         self.assertEqual(visitor_data['friction'][0]['event'], 'login_failed')
         self.assertEqual(visitor_data['friction'][0]['category'], 'other')
         self.assertEqual(visitor_data['friction'][1]['category'], 'location_permission')
-        self.assertIn('posthog-overview:v2:', cache_get.call_args.args[0])
+        cache_get.assert_not_called()
         self.assertEqual(urlopen.call_count, 7)
         action_query = json.loads(urlopen.call_args_list[2].args[0].data)['query']['query']
         self.assertIn("event IN ('add_to_cart'", action_query)
@@ -390,3 +390,14 @@ class PostHogIntegrationTests(TestCase):
             self.assertIn("toString(properties.outlet_id) = '%s'" % self.branch.pk, query)
             self.assertIn("properties.authority = 'browser'", query)
             self.assertIn("'UTC'", query)
+
+    @patch('apps.customer_web.posthog_selectors.reporting_overview')
+    def test_reporting_refresh_parameter_bypasses_cached_visitor_data(self, reporting_overview):
+        reporting_overview.return_value = {'analytics': {'visitors': {'available': True}}}
+        response = self.client.get(
+            f'/api/v1/customer/reporting-overview/?outlet_id={self.branch.pk}'
+            f'&start_date={timezone.localdate()}&end_date={timezone.localdate()}&refresh=1'
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(reporting_overview.call_args.kwargs['force_refresh'])

@@ -95,7 +95,7 @@ def _posthog_rows(config, query):
     return result['results']
 
 
-def visitor_overview(branch, config, start, end):
+def visitor_overview(branch, config, start, end, force_refresh=False):
     if not config['enabled']:
         return {'available': False, 'message': 'PostHog is not configured for this outlet.'}
     if not settings.POSTHOG_QUERY_API_KEY:
@@ -105,7 +105,7 @@ def visitor_overview(branch, config, start, end):
         }
 
     cache_key = f'posthog-overview:v2:{branch.pk}:{config["project_url"]}:{start.isoformat()}:{end.isoformat()}'
-    cached = cache.get(cache_key)
+    cached = None if force_refresh else cache.get(cache_key)
     if cached is not None:
         return cached
 
@@ -273,7 +273,7 @@ def _safe_friction_category(value):
     return 'other' if category else ''
 
 
-def reporting_overview(branch, filters, user):
+def reporting_overview(branch, filters, user, force_refresh=False):
     start, end = bounds(filters)
     orders = Order.objects.filter(branch=branch, order_source='WEBSITE', created_at__gte=start, created_at__lte=end)
     data = orders.aggregate(orders=Count('pk'), cancelled=Count('pk', filter=Q(status='CANCELLED')),
@@ -288,7 +288,7 @@ def reporting_overview(branch, filters, user):
     # project-wide analytics merely because they can read an outlet's sales.
     can_open = user.is_superuser or user.role in ('RESTAURANT_OWNER', 'BRANCH_MANAGER')
     delivery = PostHogDelivery.objects.filter(order__in=orders)
-    visitor_metrics = visitor_overview(branch, config, start, end)
+    visitor_metrics = visitor_overview(branch, config, start, end, force_refresh=force_refresh)
     return {'sales': data, 'analytics': {'provider': 'PostHog', 'configured': config['enabled'],
         'replay_enabled': config['replay'], 'project_url': config['project_url'] if can_open else '',
         'can_open': can_open, 'linked_orders': PostHogOrderIdentity.objects.filter(order__in=orders).count(),
