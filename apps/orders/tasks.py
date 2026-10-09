@@ -94,7 +94,7 @@ def send_order_push_notifications():
     )
     for event_id in pending_events:
         with transaction.atomic():
-            event = OrderOutboxEvent.objects.select_for_update().select_related('order').filter(pk=event_id).first()
+            event = OrderOutboxEvent.objects.select_for_update(of=('self',)).filter(pk=event_id).first()
             if event is None or event.push_dispatched_at is not None:
                 continue
 
@@ -121,7 +121,7 @@ def send_order_push_notifications():
     for delivery_id in delivery_ids:
         with transaction.atomic():
             delivery = (
-                OrderPushDelivery.objects.select_for_update()
+                OrderPushDelivery.objects.select_for_update(of=('self',))
                 .select_related('device', 'event__order', 'user', 'device__branch')
                 .filter(pk=delivery_id)
                 .first()

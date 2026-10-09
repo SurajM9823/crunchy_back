@@ -13,8 +13,14 @@ def send_new_order_push(token, event_id, order_id, order_number, outlet_id, user
     try:
         app = firebase_admin.get_app()
     except ValueError:
+        import os
+        cred_path = getattr(settings, 'FIREBASE_CREDENTIALS_PATH', '') or os.getenv('GOOGLE_APPLICATION_CREDENTIALS', '')
+        if cred_path and os.path.exists(cred_path):
+            cred = credentials.Certificate(cred_path)
+        else:
+            cred = credentials.ApplicationDefault()
         app = firebase_admin.initialize_app(
-            credentials.ApplicationDefault(),
+            cred,
             options={'projectId': project_id},
         )
 

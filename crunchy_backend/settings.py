@@ -239,8 +239,9 @@ CELERY_BEAT_SCHEDULE = {
     'publish-menu-outbox': {'task': 'apps.catalog.tasks.publish_menu_events', 'schedule': 1.0},
 }
 
-# Push messages are sent through Firebase Admin using Application Default Credentials.
+# Push messages are sent through Firebase Admin using Application Default Credentials or Service Account file.
 FIREBASE_PROJECT_ID = os.getenv('FIREBASE_PROJECT_ID', '')
+FIREBASE_CREDENTIALS_PATH = os.getenv('FIREBASE_CREDENTIALS_PATH', '')
 
 # Optional server-only analytics analyst. No default model or secret is shipped to the browser.
 ANALYTICS_OPENAI_API_KEY = os.getenv('ANALYTICS_OPENAI_API_KEY', '')
