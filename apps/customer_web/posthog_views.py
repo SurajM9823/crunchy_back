@@ -27,4 +27,8 @@ class ReportingOverviewView(WebsiteAnalyticsView):
         filters = ReportFilters(data=request.query_params)
         filters.is_valid(raise_exception=True)
         force_refresh = request.query_params.get('refresh') not in (None, '', '0', 'false')
-        return Response(reporting_overview(branch, filters.validated_data, request.user, force_refresh=force_refresh))
+        response = Response(reporting_overview(
+            branch, filters.validated_data, request.user, force_refresh=force_refresh,
+        ))
+        response['Cache-Control'] = 'private, no-store, no-cache, max-age=0, must-revalidate'
+        return response

@@ -315,6 +315,7 @@ class PostHogIntegrationTests(TestCase):
         self.assertEqual(response.data['sales']['refunded'], '20')
         self.assertEqual(response.data['sales']['net_received'], '230.00')
         self.assertEqual(response.data['analytics']['project_url'], self.config[str(self.branch.pk)]['project_url'])
+        self.assertIn('no-store', response['Cache-Control'])
 
     @patch('apps.customer_web.posthog_selectors.urlopen')
     @patch('apps.customer_web.posthog_selectors.cache.get')
