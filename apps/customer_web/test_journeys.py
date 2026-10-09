@@ -345,6 +345,10 @@ class PostHogIntegrationTests(TestCase):
         self.assertEqual(visitor_data['top_events'][0]['event'], 'add_to_cart')
         self.assertEqual(visitor_data['top_pages'][0]['path'], '/menu')
         self.assertEqual(urlopen.call_count, 4)
+        action_query = json.loads(urlopen.call_args_list[2].args[0].data)['query']['query']
+        self.assertIn("event IN ('add_to_cart'", action_query)
+        self.assertNotIn("event != '$pageview'", action_query)
+        self.assertIn('LIMIT 25', action_query)
         for call in urlopen.call_args_list:
             request = call.args[0]
             self.assertIn('/api/projects/12345/query/', request.full_url)

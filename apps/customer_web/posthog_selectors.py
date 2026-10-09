@@ -13,6 +13,18 @@ from .journey_selectors import bounds
 
 logger = logging.getLogger(__name__)
 
+VISITOR_ACTIONS = (
+    'add_to_cart', 'remove_from_cart', 'cart_clear', 'cart_view',
+    'category_view', 'menu_view', 'product_view', 'product_detail_view',
+    'product_image_view', 'product_search', 'checkout_click', 'checkout_start',
+    'checkout_validation_failed', 'confirm_order_click', 'delivery_information',
+    'address_entered', 'location_selected', 'name_entered', 'phone_entered',
+    'auth_required', 'payment_method_view', 'payment_method_selected',
+    'payment_proof_uploaded', 'payment_started', 'order_submit', 'order_failed',
+    'api_error', 'network_error', 'javascript_error', 'image_error',
+    'call_click', 'whatsapp_click',
+)
+
 
 def _posthog_rows(config, query):
     import re
@@ -80,10 +92,11 @@ def visitor_overview(branch, config, start, end):
         actions = _posthog_rows(config, f"""
             SELECT event, count() AS events, countDistinct(distinct_id) AS visitors
             FROM events
-            WHERE {time_filter} AND {scope} AND event != '$pageview'
+            WHERE {time_filter} AND {scope}
+              AND event IN ({', '.join(repr(event) for event in VISITOR_ACTIONS)})
             GROUP BY event
             ORDER BY events DESC
-            LIMIT 10
+            LIMIT 25
         """)
         pages = _posthog_rows(config, f"""
             SELECT properties.path AS path, count() AS page_views, countDistinct(distinct_id) AS visitors
