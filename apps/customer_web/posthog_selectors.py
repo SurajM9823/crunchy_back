@@ -68,7 +68,7 @@ def visitor_overview(branch, config, start, end):
         """)
         daily = _posthog_rows(config, f"""
             SELECT
-                toDate(timestamp, 'Asia/Kathmandu') AS date,
+                toDate(toTimeZone(timestamp, 'Asia/Kathmandu')) AS date,
                 uniqExact(distinct_id) AS visitors,
                 uniqExact(properties.$session_id) AS sessions,
                 count() AS page_views
