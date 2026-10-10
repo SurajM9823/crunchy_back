@@ -1,6 +1,7 @@
 from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
+from .client_ip import client_ip
 from .access import customer_branch, guest_hash
 from .models import Conversation, Message, ReadReceipt, ChatEvent
 
@@ -13,12 +14,19 @@ def start_conversation(request):
             defaults={'customer_name': (request.user.get_full_name() or request.user.username or 'Customer')[:120]})
     else:
         thread, _ = Conversation.objects.get_or_create(branch=branch, customer=None, guest_hash=guest_hash(request))
+    address = client_ip(request)
+    if address and thread.last_client_ip != address:
+        thread.last_client_ip = address
+        thread.save(update_fields=["last_client_ip"])
     return thread
 
 
 @transaction.atomic
-def send_message(thread, user, data, staff=False):
+def send_message(thread, user, data, staff=False, address=None):
     thread = Conversation.objects.select_for_update().get(pk=thread.pk)
+    if not staff and address and thread.last_client_ip != address:
+        thread.last_client_ip = address
+        thread.save(update_fields=['last_client_ip'])
     sender_key = f'user:{user.pk}' if user.is_authenticated else f'guest:{thread.guest_hash}'
     old = Message.objects.filter(conversation=thread, sender_key=sender_key, client_id=data['client_id']).first()
     if old:

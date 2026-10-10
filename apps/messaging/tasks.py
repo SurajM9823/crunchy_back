@@ -58,7 +58,7 @@ def deliver_chat_push():
             else:
                 try:
                     send_chat_push(device.token, event.pk, event.conversation_id, event.message_id,
-                        event.conversation.branch_id, row.user_id, event.conversation.customer_name, event.message.text)
+                        event.conversation.branch_id, row.user_id, event.conversation.display_name, event.message.text)
                     row.completed_at = timezone.now(); row.last_error = ''
                 except Exception as error:
                     row.last_error = type(error).__name__

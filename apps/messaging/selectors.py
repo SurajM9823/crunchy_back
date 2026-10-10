@@ -26,7 +26,8 @@ def thread_data(thread, user=None, staff=False, state=None):
     else:
         cursor, latest, staff_read, unread = state
     return {'id': str(thread.pk), 'outlet_id': thread.branch_id, 'outlet_name': thread.branch.name,
-        'customer_name': thread.customer_name, 'is_guest': thread.customer_id is None,
+        'customer_name': thread.display_name,
+        **({'last_client_ip': thread.last_client_ip, 'customer_id': thread.customer_id} if staff else {}), 'is_guest': thread.customer_id is None,
         'updated_at': thread.updated_at.isoformat(), 'last_message_id': thread.last_message_id,
         'customer_read_id': thread.customer_read_id, 'own_read_id': cursor,
         'staff_read_id': staff_read, 'unread_count': unread,

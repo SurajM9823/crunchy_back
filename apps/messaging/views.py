@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.throttling import SimpleRateThrottle
 from apps.orders.pos_access import staff_branch
+from .client_ip import client_ip
 from . import access, selectors, services
 from .serializers import SendSerializer, ReadSerializer
 
@@ -63,7 +64,7 @@ class MessagesView(ChatView):
     def post(self, request, conversation_id):
         thread = access.conversation_for(request, conversation_id, self.staff)
         serializer = SendSerializer(data=request.data); serializer.is_valid(raise_exception=True)
-        return Response(selectors.message_data(services.send_message(thread, request.user, serializer.validated_data, self.staff)), status=201)
+        return Response(selectors.message_data(services.send_message(thread, request.user, serializer.validated_data, self.staff, address=client_ip(request))), status=201)
 
 
 class ReadView(ChatView):

@@ -38,6 +38,20 @@ class ChatFixtures:
 
 @override_settings(**SETTINGS)
 class ChatTests(ChatFixtures, TestCase):
+    def test_ip_is_context_not_guest_identity(self):
+        first = self.guest.post('/api/v1/chat/start/', {}, format='json', REMOTE_ADDR='203.0.113.10', HTTP_X_REAL_IP='192.0.2.1').data['conversation']
+        self.assertNotIn('last_client_ip', first)
+        self.assertEqual(Conversation.objects.get(pk=first['id']).last_client_ip, '203.0.113.10')
+        stranger = APIClient(); stranger.credentials(HTTP_X_CHAT_GUEST='b'*64)
+        second = stranger.post('/api/v1/chat/start/', {}, format='json', REMOTE_ADDR='203.0.113.10').data['conversation']
+        self.assertNotEqual(first['id'], second['id'])
+        self.assertNotEqual(first['customer_name'], second['customer_name'])
+        moved = self.guest.post('/api/v1/chat/start/', {}, format='json', REMOTE_ADDR='127.0.0.1', HTTP_X_REAL_IP='203.0.113.20').data['conversation']
+        self.assertEqual(first['id'], moved['id'])
+        detail = self.client.get(f"/api/v1/chat/staff/conversations/{first['id']}/messages/?outlet_id=1").data
+        self.assertEqual(detail['conversation']['last_client_ip'], '203.0.113.20')
+        self.assertEqual(stranger.get(f"/api/v1/chat/conversations/{first['id']}/messages/").status_code, 403)
+
     def test_guest_is_pinned_to_default_and_reuses_private_thread(self):
         thread = self.start()
         self.assertEqual(self.start(), thread)
@@ -187,3 +201,35 @@ class ChatSocketTests(ChatFixtures, TransactionTestCase):
             invalid=WebsocketCommunicator(URLRouter(websocket_urlpatterns),'/ws/chat/?ticket=invalid')
             self.assertFalse((await invalid.connect())[0]);await invalid.disconnect()
         async_to_sync(run)()
+
+    def test_typing_is_private_and_scoped(self):
+        from asgiref.sync import async_to_sync
+        from channels.testing import WebsocketCommunicator
+        from channels.routing import URLRouter
+        from .routing import websocket_urlpatterns
+        thread = self.start()
+        guest_ticket = self.guest.post('/api/v1/chat/socket-ticket/', {'conversation_id':thread}, format='json').data['ticket']
+        staff_ticket = self.client.post('/api/v1/chat/staff/socket-ticket/?outlet_id=1', {}, format='json').data['ticket']
+        stranger = APIClient(); stranger.credentials(HTTP_X_CHAT_GUEST='b'*64)
+        other_thread = stranger.post('/api/v1/chat/start/', {}, format='json').data['conversation']['id']
+        other_ticket = stranger.post('/api/v1/chat/socket-ticket/', {'conversation_id':other_thread}, format='json').data['ticket']
+        async def run():
+            sockets = [WebsocketCommunicator(URLRouter(websocket_urlpatterns), f'/ws/chat/?ticket={ticket}') for ticket in (guest_ticket, staff_ticket, other_ticket)]
+            guest, staff, other = sockets
+            for socket in sockets:
+                self.assertTrue((await socket.connect())[0]); await socket.receive_json_from()
+            await guest.send_json_to({'type':'typing', 'conversation_id':other_thread, 'is_typing':True})
+            self.assertTrue(await staff.receive_nothing(timeout=.05))
+            await guest.send_json_to({'type':'typing', 'conversation_id':thread, 'is_typing':True})
+            event = await staff.receive_json_from()
+            self.assertEqual(event['conversation_id'], thread); self.assertTrue(event['is_typing'])
+            self.assertTrue(await other.receive_nothing(timeout=.05))
+            await staff.send_json_to({'type':'typing', 'conversation_id':thread, 'is_typing':True})
+            self.assertTrue((await guest.receive_json_from())['is_staff'])
+            self.assertTrue(await other.receive_nothing(timeout=.05))
+            await guest.send_json_to({'type':'typing', 'conversation_id':thread, 'is_typing':False})
+            self.assertFalse((await staff.receive_json_from())['is_typing'])
+            for socket in sockets: await socket.disconnect()
+        async_to_sync(run)()
+        self.assertEqual(Message.objects.count(), 0)
+        self.assertEqual(ChatEvent.objects.count(), 0)
