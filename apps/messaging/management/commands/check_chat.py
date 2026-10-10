@@ -1,4 +1,7 @@
 import os
+import asyncio
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.core.cache import cache
@@ -12,6 +15,17 @@ class Command(BaseCommand):
         issues = []
         backend = settings.CHANNEL_LAYERS['default']['BACKEND']
         self.stdout.write(f'Channel backend: {backend}')
+        self.stdout.write('Chat WebSocket protocol: 2 (typing enabled in this source; restart Daphne after deployment).')
+        async def check_channel():
+            layer = get_channel_layer()
+            channel = await layer.new_channel()
+            await layer.send(channel, {'type': 'chat.health'})
+            event = await asyncio.wait_for(layer.receive(channel), timeout=3)
+            return event.get('type') == 'chat.health'
+        try:
+            if not async_to_sync(check_channel)(): issues.append('Channel transport check failed.')
+            else: self.stdout.write('Channel transport: send/receive passed.')
+        except Exception as error: issues.append(f'Channel transport unavailable ({type(error).__name__}).')
         if 'redis' not in backend.lower(): issues.append('Use CHANNEL_LAYER_TYPE=redis in production; in-memory channels cannot connect separate workers.')
         try:
             cache.set('chat:healthcheck', 'ok', 10)

@@ -229,6 +229,9 @@ class ChatSocketTests(ChatFixtures, TransactionTestCase):
             self.assertTrue(await other.receive_nothing(timeout=.05))
             await guest.send_json_to({'type':'typing', 'conversation_id':thread, 'is_typing':False})
             self.assertFalse((await staff.receive_json_from())['is_typing'])
+            # A quick stop/start must not be dropped by the refresh throttle.
+            await guest.send_json_to({'type':'typing', 'conversation_id':thread, 'is_typing':True})
+            self.assertTrue((await staff.receive_json_from())['is_typing'])
             for socket in sockets: await socket.disconnect()
         async_to_sync(run)()
         self.assertEqual(Message.objects.count(), 0)

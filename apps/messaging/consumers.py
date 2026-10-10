@@ -42,7 +42,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         await self.channel_layer.group_add(self.group, self.channel_name)
         await self.accept()
         self.expiry = asyncio.create_task(self.expire())
-        await self.send_json({'event_type': 'CONNECTED'})
+        await self.send_json({'event_type': 'CONNECTED', 'capabilities': ['typing'], 'protocol_version': 2})
 
     async def expire(self):
         await asyncio.sleep(300)
@@ -74,7 +74,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         except ValueError: return
         if not self.identity['staff'] and thread_id != self.identity['conversation_id']: return
         active = content['is_typing']
-        if active and time.monotonic() - self.last_typing < 1: return
+        if active and self.typing_thread == thread_id and time.monotonic() - self.last_typing < 1: return
         if not await self.typing_allowed(thread_id): return
         if self.typing_thread and self.typing_thread != thread_id:
             await self.publish_typing(self.typing_thread, False)

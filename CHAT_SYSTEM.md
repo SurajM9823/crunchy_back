@@ -83,3 +83,14 @@ Guests retain one private thread per browser credential and outlet, with a stabl
 `last_client_ip` updates on customer start/send. `CHAT_TRUSTED_PROXY_CIDRS` defaults to loopback only. Only trusted proxy connections may supply Nginx's overwritten `X-Real-IP`. If behind Cloudflare, configure Nginx real_ip with Cloudflare's trusted ranges first; otherwise this field may show the proxy IP. Do not trust arbitrary forwarding headers or expose Daphne directly with an overly broad proxy allowlist.
 
 WebSocket `{type: "typing", conversation_id, is_typing}` produces ephemeral `CHAT_TYPING` with conversation_id, is_staff and is_typing. Outlet and conversation access are checked on the server. Typing does not create messages or push notifications. Clients throttle updates, stop after inactivity, and expire remote indicators after five seconds. Each customer message continues using the existing durable push outbox.
+
+
+### Missing typing indicators after deployment
+
+The website build and installed APK must both include typing support; updating only the backend is insufficient. On 2026-10-10 the public website bundle `index-DShw0WTW.js` and connected phone APK contained chat but no `CHAT_TYPING` handler. Local source changes do not update either artifact automatically.
+
+Deploy the freshly built website `dist` output, restart Daphne with the updated backend, and install the rebuilt APK (preserving app data). Run `python manage.py check_chat` in the server environment: this now verifies the channel transport itself, as well as Redis/cache configuration. In browser Network > WS, `/ws/chat/` should receive `CONNECTED` with `protocol_version: 2` and `capabilities: ["typing"]`; while entering text it should send `type: "typing"`. The other participant should receive `CHAT_TYPING` for the same conversation. Redis channel layers are required across processes. Use a customer/guest browser and an admin app opened to that same conversation; two staff sessions are not a customer/admin pair.
+
+Typing indicators are pinned immediately above the input so they remain visible when message history is scrolled up. Quick stop/start transitions are not suppressed by the backend typing refresh throttle.
+
+The Nginx template now sends `Cache-Control: no-cache` for HTML routes while keeping hashed assets immutable. Apply the template change, run `nginx -t`, and reload Nginx on the server; purge any CDN-cached HTML if it still references the older application bundle.
