@@ -72,3 +72,14 @@ All paths start /api/v1/chat/. Guests include X-Chat-Guest; signed-in users use 
 - Staff message/read/ticket endpoints use staff/ prefix and outlet_id=N
 - GET history supports before=<message ID> for older pages or after=<message ID> for reconnect catch-up
 - WebSocket /ws/chat/?ticket=... emits CHAT_MESSAGE, CHAT_READ and heartbeat revisions. Message content is fetched over the authorised REST endpoints.
+
+
+## Conversation identity and typing refinement
+
+Run `python manage.py migrate` for messaging migration 0002, then restart Daphne, Celery worker and beat, deploy the website build, and rebuild/install the Android app.
+
+Guests retain one private thread per browser credential and outlet, with a stable `Guest <id>` label. IP is staff-only context, never a credential: shared Wi-Fi users must not see one another's messages, and changing networks must not lose replies. Signed-in customers retain account/outlet threads. Existing guest labels are derived when read, without rewriting history.
+
+`last_client_ip` updates on customer start/send. `CHAT_TRUSTED_PROXY_CIDRS` defaults to loopback only. Only trusted proxy connections may supply Nginx's overwritten `X-Real-IP`. If behind Cloudflare, configure Nginx real_ip with Cloudflare's trusted ranges first; otherwise this field may show the proxy IP. Do not trust arbitrary forwarding headers or expose Daphne directly with an overly broad proxy allowlist.
+
+WebSocket `{type: "typing", conversation_id, is_typing}` produces ephemeral `CHAT_TYPING` with conversation_id, is_staff and is_typing. Outlet and conversation access are checked on the server. Typing does not create messages or push notifications. Clients throttle updates, stop after inactivity, and expire remote indicators after five seconds. Each customer message continues using the existing durable push outbox.

@@ -370,11 +370,26 @@ without a brand are imported only when there is one unambiguous active brand.
 - Customer OTPs go only to the requesting customer. Admin mobile numbers, keyword,
   shortcode and public base URL are stored configuration for future notification,
   incoming-message and one-click-link workflows; these do not enable such flows.
-- `/admin?tab=analytics` shows recorded visitors, sessions and page views over
-  7/30/90 days. Visitors are browser identifiers, not verified people; shared kiosk
-  browsers count as devices. No old traffic is fabricated. Stored visits exclude
-  query strings, auth tokens, names and phones; visitor/session identifiers are
-  hashed. Browser Do Not Track and Global Privacy Control skip collection.
+- Configure `POSTHOG_OUTLETS` as a JSON object keyed by active Django branch ID.
+  Each value contains the public `phc_...` project token, `host` (`https://us.i.posthog.com`
+  or `https://eu.i.posthog.com`), the matching project dashboard URL, and `replay`
+  (`true` only after reviewing the privacy-masking settings). Never put a personal
+  PostHog API key in this setting. Keep the Celery worker and Beat running so
+  server-confirmed order and payment events leave the transactional outbox.
+- To show visitor counts, daily traffic, popular pages and actions directly in
+  `/admin?tab=analytics`, also configure `POSTHOG_QUERY_API_KEY` in the backend
+  environment. Use a PostHog Personal API Key with read-only access to the project.
+  This key is server-only; never put it in frontend environment variables or browser
+  code. Without it, the admin shows an explanation and links to PostHog instead.
+- `/admin?tab=analytics` separates authoritative Django website-order/payment totals
+  from visitor funnels, campaign analysis and session replay in PostHog. A QR receipt
+  submission is not counted as a verified payment; use the `payment_success` event
+  for paid-order conversion in PostHog. The old custom journey data remains stored
+  for historical access but is no longer the active visitor analytics dashboard.
+- Browser tracking skips Do Not Track and Global Privacy Control signals. PostHog
+  autocapture and automatic page views are disabled; only the app's allowlisted
+  events are sent. Session replay is opt-in per outlet, masks all page text and form
+  input, and does not record pages under admin, profile, order, tracking or auth paths.
 - `/admin?tab=customers` is an outlet-scoped, searchable, paginated customer table.
   A guest-supplied number is contact information, not proof of phone ownership.
   Registered means a web account exists for that mobile. Order value excludes cancelled
@@ -382,4 +397,18 @@ without a brand are imported only when there is one unambiguous active brand.
 - Keep `/ws/outlets/<id>/analytics/` proxied to Daphne. This socket exposes only a
   revision hash; private traffic aggregates and contacts require authorized REST
   access. Pages refresh changed data on WebSocket heartbeats and reconnection.
-- `prune-website-visits` removes raw visits older than 90 days daily through Beat.
+- Visitor queries now run in the `build_journey_reports` Celery task, scheduled by
+  `refresh-posthog-reports` every three seconds. Deploy/restart both worker and Beat
+  with the API and frontend. HTTP returns sales and the latest visitor snapshot
+  immediately; concurrent requests share one job per outlet/date range. Failed
+  refreshes retain the last successful report. The UI labels its update time.
+  Connected dashboards check for new external visits approximately once a minute
+  through WebSocket revisions; PostHog ingestion/query delays still apply. Manual
+  refresh requests a new snapshot, including a provider-side cache refresh.
+- Storefront page views are sent immediately after SDK initialization, and failed
+  tracking-config requests retry with bounded backoff and recover on reconnect.
+  A visitor who exits before initialization, blocks analytics, disables storage,
+  or opts out can still be absent. Do not compare unique visitors with page views,
+  or a rolling 24-hour query with a Nepal calendar-day report.
+- `prune-website-visits` removes old raw visits and delivered outbox rows older than
+  90 days daily through Beat.
