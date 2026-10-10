@@ -61,11 +61,11 @@ class CustomerCartMerge(models.Model):
 
 
 class CustomerOrder(models.Model):
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True)
     order = models.OneToOneField('orders.Order', on_delete=models.PROTECT, related_name='web_customer')
     request_key = models.CharField(max_length=128)
     fingerprint = models.CharField(max_length=64)
-    # Receipt evidence stays private; access only through the authenticated endpoint.
+    # Receipt evidence is never included in public order-tracking responses.
     receipt_image = models.BinaryField()
     receipt_type = models.CharField(max_length=32)
     items_payload = models.JSONField(default=list)
@@ -74,7 +74,11 @@ class CustomerOrder(models.Model):
     payment_review = models.CharField(max_length=20, default='PENDING')
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=['user', 'request_key'], name='customer_checkout_request_unique')]
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'request_key'], name='customer_checkout_request_unique'),
+            models.UniqueConstraint(fields=['request_key'], condition=models.Q(user__isnull=True),
+                                    name='customer_guest_checkout_request_unique'),
+        ]
 
 
 class SmsDelivery(models.Model):

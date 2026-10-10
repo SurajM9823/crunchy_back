@@ -294,7 +294,7 @@ class CustomerFlowTests(TestCase):
         self.assertEqual(self.post('auth/login/',{'phone':'9800000011','method':'PASSWORD','credential':'Customer-secret99'}).status_code,200)
 
     def test_authenticated_receipt_checkout_is_pending_and_idempotent(self):
-        self.assertEqual(self.post('checkout/quote/',self.payload()).status_code,401)
+        self.assertEqual(self.post('checkout/quote/',self.payload()).status_code,400)
         self.client.force_authenticate(self.customer)
         one=self.checkout();two=self.checkout()
         self.assertEqual(one.status_code,201,one.data);self.assertEqual(two.status_code,200,two.data)
@@ -303,6 +303,38 @@ class CustomerFlowTests(TestCase):
         self.assertEqual(one.data['order_source'],'WEBSITE');self.assertEqual(one.data['status'],'PENDING')
         self.assertTrue(CustomerOrder.objects.get().receipt_image)
         publish_pos_events()
+
+    def test_guest_receipt_checkout_and_phone_verified_tracking(self):
+        data=self.payload(customer_phone='9800000033')
+        quote=self.post('checkout/quote/',data)
+        self.assertEqual(quote.status_code,200,quote.data)
+        body={**data,'expected_total':quote.data['total_payable']}
+        first=self.client.post('/api/v1/customer/checkout/',
+            {'payload':json.dumps(body),'receipt':self.image()},HTTP_IDEMPOTENCY_KEY='guest-one')
+        retry=self.client.post('/api/v1/customer/checkout/',
+            {'payload':json.dumps(body),'receipt':self.image()},HTTP_IDEMPOTENCY_KEY='guest-one')
+        self.assertEqual(first.status_code,201,first.data)
+        self.assertEqual(retry.status_code,200,retry.data)
+        self.assertEqual(first.data['id'],retry.data['id'])
+        link=CustomerOrder.objects.get(order_id=first.data['id'])
+        self.assertIsNone(link.user_id)
+        self.assertEqual(link.order.customer_phone,'+9779800000033')
+        self.assertEqual(Order.objects.count(),1)
+
+        path='/api/v1/customer/guest-orders/track/'
+        wrong=self.client.post(path,{'order_number':first.data['order_number'],'customer_phone':'9800000044'},format='json')
+        self.assertEqual(wrong.status_code,404)
+        tracked=self.client.post(path,{'order_number':first.data['order_number'],'customer_phone':'9800000033'},format='json')
+        self.assertEqual(tracked.status_code,200,tracked.data)
+        self.assertEqual(tracked.data['order_number'],first.data['order_number'])
+        self.assertEqual(tracked.data['status'],'PENDING')
+        self.assertNotIn('delivery_address',tracked.data)
+
+    def test_guest_checkout_requires_a_valid_phone(self):
+        self.assertEqual(self.post('checkout/quote/',self.payload()).status_code,400)
+        invalid=self.post('checkout/quote/',self.payload(customer_phone='123'))
+        self.assertEqual(invalid.status_code,400)
+        self.assertFalse(Order.objects.exists())
 
     def test_combo_choices_and_tip_survive_order_and_billing_quote(self):
         self.client.force_authenticate(self.customer)
@@ -428,4 +460,3 @@ class CustomerFlowTests(TestCase):
         self.client.put(path, {'items': [self.cart_item()], 'version': version}, format='json')
         self.assertEqual(self.checkout(data).data['id'], first.data['id'])
         self.assertEqual(len(self.client.get(path).data['items']), 1)
-

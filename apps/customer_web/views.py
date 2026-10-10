@@ -8,9 +8,10 @@ from django.db import transaction, IntegrityError
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import serializers
-from rest_framework.exceptions import ValidationError, PermissionDenied
+from rest_framework.exceptions import ValidationError, PermissionDenied, NotFound
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 from apps.catalog.models import Product
 from apps.catalog.selectors import quote_items
@@ -118,6 +119,15 @@ def branch_for(request, data=None):
     return get_object_or_404(Branch.objects.select_related('restaurant'), pk=outlet_id, is_active=True, restaurant__is_active=True)
 
 
+def normalize_customer_phone(value):
+    digits = ''.join(character for character in str(value or '') if character.isdigit())
+    if digits.startswith('977') and len(digits) == 13:
+        digits = digits[3:]
+    if len(digits) == 10 and digits.startswith(('97', '98')):
+        return '+977' + digits
+    return ''
+
+
 class CheckoutMetaView(APIView):
     permission_classes = [AllowAny]
 
@@ -138,6 +148,7 @@ class CheckoutInput(serializers.Serializer):
     cart_line_ids = serializers.ListField(child=serializers.CharField(max_length=120), max_length=100, required=False, default=list)
     fulfillment_type = serializers.ChoiceField(choices=['DELIVERY','TAKEAWAY','DRIVE_THRU','DINE_IN'])
     customer_name = serializers.CharField(max_length=120)
+    customer_phone = serializers.CharField(max_length=32, allow_blank=True, required=False)
     delivery_address = serializers.CharField(max_length=1000, allow_blank=True, default='')
     delivery_location = serializers.DictField(required=False, default=dict)
     table_id = serializers.IntegerField(min_value=1, allow_null=True, required=False)
@@ -159,6 +170,11 @@ class CheckoutInput(serializers.Serializer):
         return point
 
     def validate(self, data):
+        if data.get('customer_phone'):
+            phone = normalize_customer_phone(data['customer_phone'])
+            if not phone:
+                raise serializers.ValidationError({'customer_phone': 'Enter a valid 10-digit Nepali mobile number.'})
+            data['customer_phone'] = phone
         ids = data.get('cart_line_ids', [])
         if ids and (len(ids) != len(data['items']) or len(ids) != len(set(ids))):
             raise serializers.ValidationError('Cart lines do not match the ordered items.')
@@ -179,12 +195,24 @@ def customer_quote(branch, data, phone=''):
     return result
 
 
-class QuoteView(CustomerView):
+class QuoteView(APIView):
+    permission_classes = [AllowAny]
+
+    def finalize_response(self, request, response, *args, **kwargs):
+        response = super().finalize_response(request, response, *args, **kwargs)
+        response['Cache-Control'] = 'private, no-store'
+        return response
+
     def post(self, request):
+        if request.user.is_authenticated and not request.user.is_active:
+            raise PermissionDenied('This account is disabled.')
         serializer = CheckoutInput(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        return Response(customer_quote(branch_for(request, data), data, request.user.phone_number))
+        phone = request.user.phone_number if request.user.is_authenticated else data.get('customer_phone', '')
+        if not phone:
+            raise ValidationError({'customer_phone': 'Enter a phone number for your order.'})
+        return Response(customer_quote(branch_for(request, data), data, phone))
 
 
 def customer_order_data(link):
@@ -195,7 +223,19 @@ def customer_order_data(link):
     return row
 
 
-class CheckoutView(CustomerView):
+class CheckoutView(APIView):
+    permission_classes = [AllowAny]
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if request.user.is_authenticated and not request.user.is_active:
+            raise PermissionDenied('This account is disabled.')
+
+    def finalize_response(self, request, response, *args, **kwargs):
+        response = super().finalize_response(request, response, *args, **kwargs)
+        response['Cache-Control'] = 'private, no-store'
+        return response
+
     def post(self, request):
         try:
             payload = json.loads(request.data.get('payload', ''))
@@ -213,11 +253,16 @@ class CheckoutView(CustomerView):
         key = request.headers.get('Idempotency-Key', '')
         if not key or len(key) > 128:
             raise ValidationError('A checkout request key is required.')
+        user = request.user if request.user.is_authenticated else None
+        customer_phone = user.phone_number if user else data.get('customer_phone', '')
+        if not customer_phone:
+            raise ValidationError({'customer_phone': 'Enter a phone number for your order.'})
         fingerprint = hashlib.sha256(json.dumps(data, sort_keys=True, default=str).encode()+content).hexdigest()
         with transaction.atomic():
-            # Per-customer lock makes retries across outlets safe as well.
-            type(request.user).objects.select_for_update().get(pk=request.user.pk)
-            old = CustomerOrder.objects.filter(user=request.user, request_key=key).select_related('order__branch').first()
+            if user:
+                # Per-customer lock makes retries across outlets safe as well.
+                type(user).objects.select_for_update().get(pk=user.pk)
+            old = CustomerOrder.objects.filter(user=user, request_key=key).select_related('order__branch').first()
             if old:
                 if old.fingerprint != fingerprint:
                     raise Conflict('This request key belongs to a different checkout.')
@@ -226,11 +271,11 @@ class CheckoutView(CustomerView):
             Branch.objects.select_for_update().get(pk=branch.pk)
             from apps.orders.deletion import deleted_web_key
             from apps.orders.models import PosMutation
-            if PosMutation.objects.filter(key=deleted_web_key(request.user.pk, key)).exists():
+            if PosMutation.objects.filter(key=deleted_web_key(user.pk if user else None, key)).exists():
                 raise Conflict('This order was permanently deleted. Start a new checkout.')
             if not branch.restaurant.payment_qr:
                 raise ValidationError('The outlet has not configured its payment QR yet.')
-            priced = customer_quote(branch, data, request.user.phone_number)
+            priced = customer_quote(branch, data, customer_phone)
             if data.get('expected_total') != Decimal(priced['total_payable']):
                 raise Conflict('The total changed. Review the updated amount before submitting.')
             if data['fulfillment_type'] == 'DELIVERY' and not data['delivery_address'].strip():
@@ -254,28 +299,29 @@ class CheckoutView(CustomerView):
             order = Order.objects.create(branch=branch, is_pos_managed=True, order_source='WEBSITE', status='PENDING',
                 order_number=generate_order_number('WEBSITE'), pricing_policy=policy,
                 table=table, table_session_id=uuid.uuid4() if table else None, customer_name=data['customer_name'],
-                customer_phone=request.user.phone_number, fulfillment_type=data['fulfillment_type'],
+                customer_phone=customer_phone, fulfillment_type=data['fulfillment_type'],
                 delivery_address=delivery_address, notes=data['notes'], payment_method='FONEPAY',
                 **{field: Decimal(priced[field]) for field in ['subtotal','total_payable','discount_amount','service_charge_amount','vat_included_amount','cash_round_down_savings']})
             if priced['loyalty']:
                 order.discount_reason = f"Loyalty: {priced['loyalty']['name']} ({priced['loyalty']['percent']}%)"
                 order.save(update_fields=['discount_reason'])
-            add_lines(order, data['items'], priced, request.user)
+            add_lines(order, data['items'], priced, user)
             if table:
                 table.active_session_id = order.table_session_id
                 table.save(update_fields=['active_session_id'])
-            link = CustomerOrder.objects.create(user=request.user, order=order, request_key=key, fingerprint=fingerprint,
+            link = CustomerOrder.objects.create(user=user, order=order, request_key=key, fingerprint=fingerprint,
                 receipt_image=content, receipt_type=proof.content_type, tip=data['tip'], items_payload=data['items'], delivery_location=delivery_location)
             from .journey_services import attach_order
             attach_order(order, analytics_context)
-            services.consume_cart(request.user, branch, data['cart_line_ids'], data['items'])
-            audit(order, request.user, '', 'Customer QR receipt submitted; payment verification pending')
+            if user:
+                services.consume_cart(user, branch, data['cart_line_ids'], data['items'])
+            audit(order, user, '', 'Customer QR receipt submitted; payment verification pending')
             receipt(order, 'TOKEN', sequence)
             OrderOutboxEvent.objects.create(branch=branch, order=order, event_type='ORDER_CREATE', payload={'version':order.version})
             from apps.catalog.services import menu_changed
             menu_changed(branch_id=branch.pk)
-            profile, _ = CustomerProfile.objects.get_or_create(user=request.user)
-            if data['delivery_address']:
+            if user and data['delivery_address']:
+                profile, _ = CustomerProfile.objects.get_or_create(user=user)
                 profile.address = data['delivery_address']; profile.save(update_fields=['address'])
             return Response(customer_order_data(link), status=201)
 
@@ -284,6 +330,42 @@ class OrdersView(CustomerView):
     def get(self, request):
         links = CustomerOrder.objects.filter(user=request.user).select_related('order__branch').order_by('-order__created_at')
         return Response({'results': [customer_order_data(link) for link in links]})
+
+
+class GuestOrderTrackingThrottle(AnonRateThrottle):
+    rate = '10/hour'
+
+
+class GuestOrderTrackingView(APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [GuestOrderTrackingThrottle]
+
+    def post(self, request):
+        order_number = serializers.CharField(max_length=64, trim_whitespace=True).run_validation(
+            request.data.get('order_number', ''))
+        phone = normalize_customer_phone(request.data.get('customer_phone', ''))
+        if not phone:
+            raise ValidationError({'customer_phone': 'Enter the same 10-digit phone number used at checkout.'})
+        link = CustomerOrder.objects.select_related('order__branch', 'order__table').filter(
+            user__isnull=True, order__order_number=order_number).first()
+        if not link or normalize_customer_phone(link.order.customer_phone) != phone:
+            raise NotFound('No guest order matches that order number and phone number.')
+        order = link.order
+        from apps.orders.preparation import rounds
+        response = Response({
+            'order_number': order.order_number,
+            'outlet_id': order.branch_id,
+            'outlet_name': order.branch.name,
+            'rounds': [{key: value for key, value in row.items() if key != 'item_ids'} for row in rounds(order)],
+            'status': order.status,
+            'fulfillment_type': order.fulfillment_type,
+            'table_number': order.table.table_number if order.table_id else None,
+            'updated_at': order.updated_at.isoformat(),
+            'history': [{'status': row.to_status, 'timestamp': row.created_at.isoformat()}
+                        for row in order.status_history.order_by('created_at', 'pk')],
+        })
+        response['Cache-Control'] = 'no-store'
+        return response
 
 
 class CancelView(CustomerView):

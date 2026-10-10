@@ -5,7 +5,7 @@ from .posthog_views import TrackingConfigView, ReportingOverviewView
 from django.urls import path
 from .account_views import CustomerAccountView, CustomerAccountReceiptView
 from .auth import CustomerAuthView
-from .views import ProfileView, FavoriteView, CheckoutMetaView, QuoteView, CheckoutView, OrdersView, CancelView, PaymentProofView, SocketTicketView
+from .views import ProfileView, FavoriteView, CheckoutMetaView, QuoteView, CheckoutView, OrdersView, GuestOrderTrackingView, CancelView, PaymentProofView, SocketTicketView
 from .views import AddressView, AddressDetailView, CartView
 
 urlpatterns = [
@@ -36,6 +36,7 @@ urlpatterns = [
     path('checkout/quote/', QuoteView.as_view()),
     path('checkout/', CheckoutView.as_view()),
     path('orders/', OrdersView.as_view()),
+    path('guest-orders/track/', GuestOrderTrackingView.as_view()),
     path('orders/<int:order_id>/cancel/', CancelView.as_view()),
     path('orders/<int:order_id>/receipt/', PaymentProofView.as_view()),
     path('socket-ticket/', SocketTicketView.as_view()),
