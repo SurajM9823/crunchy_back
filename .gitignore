@@ -44,3 +44,5 @@ logs/*
 
 # Server-only Firebase service account credentials
 *-firebase-adminsdk-*.json
+
+private_chat/

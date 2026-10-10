@@ -236,3 +236,63 @@ class ChatSocketTests(ChatFixtures, TransactionTestCase):
         async_to_sync(run)()
         self.assertEqual(Message.objects.count(), 0)
         self.assertEqual(ChatEvent.objects.count(), 0)
+
+
+@override_settings(**SETTINGS)
+class AttachmentTests(ChatFixtures, TestCase):
+    def setUp(self):
+        super().setUp()
+        import tempfile
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.storage = override_settings(CHAT_UPLOAD_ROOT=self.directory.name)
+        self.storage.enable(); self.addCleanup(self.storage.disable)
+    def upload(self, thread, name='receipt.pdf', content=b'%PDF-1.4 test receipt', mime='application/pdf', key=None, client=None, staff=False):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        return (client or self.guest).post(f"/api/v1/chat/{'staff/' if staff else ''}conversations/{thread}/messages/?outlet_id=1", {
+            'client_id':str(key or uuid.uuid4()), 'file':SimpleUploadedFile(name,content,content_type=mime), 'text':''}, format='multipart')
+    def test_upload_retry_private_access_and_ranges(self):
+        thread=self.start(); key=uuid.uuid4()
+        result=self.upload(thread,key=key)
+        self.assertEqual(result.status_code,201,result.data)
+        self.assertEqual(result.data['attachment']['mime'],'application/pdf')
+        self.assertEqual(Message.objects.count(),1)
+        self.assertEqual(ChatEvent.objects.count(),1)
+        self.assertEqual(self.upload(thread,key=key).data['id'],result.data['id'])
+        self.assertEqual(self.upload(thread,key=key,content=b'%PDF-1.4 changed').status_code,400)
+        self.assertEqual(Message.objects.count(),1)
+        access=f"/api/v1/chat/conversations/{thread}/messages/{result.data['id']}/attachment/"
+        stranger=APIClient(); stranger.credentials(HTTP_X_CHAT_GUEST='b'*64)
+        self.assertEqual(stranger.get(access).status_code,403)
+        link=self.guest.get(access).data['url']
+        response=APIClient().get(link)
+        self.assertEqual(b''.join(response.streaming_content),b'%PDF-1.4 test receipt')
+        self.assertIn('attachment;',response['Content-Disposition'])
+        self.assertEqual(response['Cache-Control'],'private, no-store')
+        partial=APIClient().get(link,HTTP_RANGE='bytes=0-3')
+        self.assertEqual(partial.status_code,206)
+        self.assertEqual(b''.join(partial.streaming_content),b'%PDF')
+        self.assertEqual(APIClient().get(link,HTTP_RANGE='bytes=999-').status_code,416)
+        self.assertEqual(APIClient().get(link+'broken').status_code,403)
+        with patch('django.core.signing.time.time',return_value=timezone.now().timestamp()+601):
+            self.assertEqual(APIClient().get(link).status_code,403)
+        other=APIClient();other.force_authenticate(self.other_staff)
+        self.assertEqual(other.get(access.replace('/chat/','/chat/staff/')+f'?outlet_id={self.other.pk}').status_code,403)
+    def test_staff_audio_push_preview_and_unsafe_files_download_only(self):
+        thread=self.start()
+        response=self.upload(thread,name='Voice.m4a',content=b'\x00\x00\x00\x18ftypM4A '+b'a'*64,mime='audio/mp4',client=self.client,staff=True)
+        self.assertEqual(response.status_code,201,response.data)
+        self.assertEqual(response.data['attachment']['kind'],'audio')
+        self.assertEqual(response.data['preview'],'Attachment: Voice.m4a')
+        bad=self.upload(thread,name='photo.svg',content=b'<svg onload="alert(1)"></svg>',mime='image/svg+xml')
+        self.assertEqual(bad.data['attachment']['kind'],'file')
+        self.assertEqual(bad.data['attachment']['mime'],'application/octet-stream')
+        with override_settings(CHAT_MAX_UPLOAD_BYTES=4): self.assertEqual(self.upload(thread).status_code,400)
+        self.assertEqual(self.upload(thread,content=b'').status_code,400)
+    def test_failed_transaction_removes_uploaded_file(self):
+        from pathlib import Path
+        thread=self.start()
+        with patch('apps.messaging.services.ChatEvent.objects.create',side_effect=RuntimeError('outbox failed')):
+            with self.assertRaises(RuntimeError): self.upload(thread)
+        self.assertFalse(any(path.is_file() for path in Path(self.directory.name).rglob('*')))
+        self.assertEqual(Message.objects.count(),0)

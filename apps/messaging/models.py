@@ -2,6 +2,7 @@ import uuid
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
+from .attachments import ChatStorage, upload_path
 
 
 class Conversation(models.Model):
@@ -35,7 +36,17 @@ class Message(models.Model):
     sender_key = models.CharField(max_length=80)
     is_staff = models.BooleanField(default=False)
     client_id = models.UUIDField()
-    text = models.CharField(max_length=2000)
+    text = models.CharField(max_length=2000, blank=True)
+    file = models.FileField(storage=ChatStorage(), upload_to=upload_path, blank=True)
+    file_name = models.CharField(max_length=180, blank=True)
+    file_mime = models.CharField(max_length=100, blank=True)
+    file_size = models.PositiveIntegerField(default=0)
+    file_sha256 = models.CharField(max_length=64, blank=True)
+
+    @property
+    def preview(self):
+        return self.text or (f'Attachment: {self.file_name}' if self.file else '')
+
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:

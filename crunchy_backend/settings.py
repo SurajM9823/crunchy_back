@@ -373,3 +373,7 @@ CHAT_TRUSTED_PROXY_CIDRS = os.getenv('CHAT_TRUSTED_PROXY_CIDRS', '127.0.0.1/32,:
 CHAT_GUEST_OUTLET_ID = int(os.getenv('CHAT_GUEST_OUTLET_ID', '1'))
 from corsheaders.defaults import default_headers
 CORS_ALLOW_HEADERS = list(default_headers) + ['x-chat-guest', 'idempotency-key']
+
+# Private chat files must never be exposed under /media/.
+CHAT_UPLOAD_ROOT = os.getenv("CHAT_UPLOAD_ROOT", str(BASE_DIR / "private_chat"))
+CHAT_MAX_UPLOAD_BYTES = 20 * 1024 * 1024

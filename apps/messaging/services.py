@@ -1,6 +1,7 @@
 from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
+from .attachments import inspect_upload
 from .client_ip import client_ip
 from .access import customer_branch, guest_hash
 from .models import Conversation, Message, ReadReceipt, ChatEvent
@@ -23,6 +24,9 @@ def start_conversation(request):
 
 @transaction.atomic
 def send_message(thread, user, data, staff=False, address=None):
+    data = dict(data)
+    upload = data.pop('file', None)
+    metadata = inspect_upload(upload) if upload else {}
     thread = Conversation.objects.select_for_update().get(pk=thread.pk)
     if not staff and address and thread.last_client_ip != address:
         thread.last_client_ip = address
@@ -30,15 +34,21 @@ def send_message(thread, user, data, staff=False, address=None):
     sender_key = f'user:{user.pk}' if user.is_authenticated else f'guest:{thread.guest_hash}'
     old = Message.objects.filter(conversation=thread, sender_key=sender_key, client_id=data['client_id']).first()
     if old:
-        if old.text != data['text'] or old.is_staff != staff: raise ValidationError('This send key was already used for another message.')
+        if old.text != data['text'] or old.is_staff != staff or old.file_sha256 != metadata.get('file_sha256', '') or old.file_name != metadata.get('file_name', ''): raise ValidationError('This send key was already used for another message.')
         return old
-    message = Message.objects.create(conversation=thread, sender=user if user.is_authenticated else None,
-        sender_key=sender_key, is_staff=staff, **data)
-    thread.last_message_id = message.pk
-    thread.updated_at = timezone.now()
-    thread.revision += 1
-    thread.save(update_fields=['last_message_id', 'updated_at', 'revision'])
-    ChatEvent.objects.create(conversation=thread, message=message)
+    message = Message(conversation=thread, sender=user if user.is_authenticated else None,
+        sender_key=sender_key, is_staff=staff, **data, **metadata)
+    try:
+        if upload: message.file.save(upload.name, upload, save=False)
+        message.save()
+        thread.last_message_id = message.pk
+        thread.updated_at = timezone.now()
+        thread.revision += 1
+        thread.save(update_fields=['last_message_id', 'updated_at', 'revision'])
+        ChatEvent.objects.create(conversation=thread, message=message)
+    except Exception:
+        if message.file: message.file.delete(save=False)
+        raise
     return message
 
 

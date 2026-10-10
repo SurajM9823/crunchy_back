@@ -14,7 +14,9 @@ def number(raw, default=0):
 
 def message_data(message):
     return {'id': message.pk, 'conversation_id': str(message.conversation_id), 'client_id': str(message.client_id),
-        'text': message.text, 'is_staff': message.is_staff, 'created_at': message.created_at.isoformat()}
+        'text': message.text, 'preview': message.preview,
+        'attachment': ({'name': message.file_name, 'size': message.file_size, 'mime': message.file_mime,
+            'kind': message.file_mime.split('/')[0] if message.file_mime.startswith(('image/', 'audio/', 'video/')) else 'file'} if message.file else None), 'is_staff': message.is_staff, 'created_at': message.created_at.isoformat()}
 
 
 def thread_data(thread, user=None, staff=False, state=None):
