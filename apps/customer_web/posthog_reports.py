@@ -16,7 +16,7 @@ def visitor_snapshot(branch, filters, force_refresh=False):
     if not settings.POSTHOG_QUERY_API_KEY:
         return {'available': False, 'message': 'Visitor reporting needs a read-only PostHog query key on the backend.'}
     normalized = {key: str(value) for key, value in filters.items() if key in ('start_date', 'end_date', 'start_time', 'end_time')}
-    key = hashlib.sha256(json.dumps(['posthog-visitors-v1', branch.pk, config['project_url'], normalized], sort_keys=True).encode()).hexdigest()
+    key = hashlib.sha256(json.dumps(['posthog-visitors-v2', branch.pk, config['project_url'], normalized], sort_keys=True).encode()).hexdigest()
     with transaction.atomic():
         report, _ = JourneyReport.objects.get_or_create(key=key, defaults={
             'branch': branch, 'filters': {**normalized, '_posthog': True}})

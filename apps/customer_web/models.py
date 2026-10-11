@@ -81,6 +81,16 @@ class CustomerOrder(models.Model):
         ]
 
 
+class OrderReview(models.Model):
+    order = models.OneToOneField('orders.Order', on_delete=models.CASCADE, related_name='customer_review')
+    rating = models.PositiveSmallIntegerField()
+    comment = models.TextField(blank=True, max_length=2000)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=models.Q(rating__gte=1, rating__lte=5), name='order_review_rating_range')]
+
+
 class SmsDelivery(models.Model):
     challenge = models.OneToOneField(SignupChallenge, on_delete=models.CASCADE)
     payload_encrypted = models.TextField()

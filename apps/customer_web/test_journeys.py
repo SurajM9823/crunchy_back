@@ -329,6 +329,8 @@ class PostHogIntegrationTests(TestCase):
             {'results': [[3, 2, 1, 1, 1, 1, 0]]},
             {'results': [['payment_method_view', 1, 1], ['add_to_cart', 1, 1]]},
             {'results': [['login_failed', 'unsafe@value', 2, 1], ['delivery_location_error', 'location_permission', 1, 1]]},
+            {'results': [['chat_icon_click', 8, 3], ['chat_message_sent', 4, 2]]},
+            {'results': [['/menu', 8, 4, 1, 3]]},
         ]
         def response_for_query(request, timeout):
             self.assertEqual(timeout, 12)
@@ -368,7 +370,15 @@ class PostHogIntegrationTests(TestCase):
         self.assertEqual(visitor_data['friction'][0]['category'], 'other')
         self.assertEqual(visitor_data['friction'][1]['category'], 'location_permission')
         cache_get.assert_not_called()
-        self.assertEqual(urlopen.call_count, 7)
+        self.assertEqual(urlopen.call_count, 9)
+        self.assertEqual(visitor_data['chat_events'][0], {'event':'chat_icon_click','events':8,'visitors':3})
+        self.assertEqual(visitor_data['chat_pages'][0], {'path':'/menu','opens':8,'messages':4,'failures':1,'visitors':3})
+        for call in urlopen.call_args_list[7:]:
+            query = json.loads(call.args[0].data)['query']['query']
+            self.assertIn(f"toString(properties.outlet_id) = '{self.branch.pk}'", query)
+            self.assertIn("properties.authority = 'browser'", query)
+            self.assertIn('timestamp >=', query)
+            self.assertIn('timestamp <=', query)
         action_query = json.loads(urlopen.call_args_list[2].args[0].data)['query']['query']
         self.assertIn("event IN ('add_to_cart'", action_query)
         self.assertNotIn("event != '$pageview'", action_query)

@@ -7,8 +7,10 @@ from .account_views import CustomerAccountView, CustomerAccountReceiptView
 from .auth import CustomerAuthView
 from .views import ProfileView, FavoriteView, CheckoutMetaView, QuoteView, CheckoutView, OrdersView, GuestOrderTrackingView, CancelView, PaymentProofView, SocketTicketView
 from .views import AddressView, AddressDetailView, CartView
+from .review_views import OrderReviewView
 
 urlpatterns = [
+    path('order-review/', OrderReviewView.as_view()),
     path('tracking-config/', TrackingConfigView.as_view()),
     path('reporting-overview/', ReportingOverviewView.as_view()),
     path('events/', EventBatchView.as_view()),

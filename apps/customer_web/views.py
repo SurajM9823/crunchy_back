@@ -351,8 +351,10 @@ class GuestOrderTrackingView(APIView):
         if not link or normalize_customer_phone(link.order.customer_phone) != phone:
             raise NotFound('No guest order matches that order number and phone number.')
         order = link.order
+        from .review_services import review_data
         from apps.orders.preparation import rounds
         response = Response({
+            'review': review_data(order),
             'order_number': order.order_number,
             'outlet_id': order.branch_id,
             'outlet_name': order.branch.name,

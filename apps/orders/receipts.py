@@ -13,7 +13,7 @@ from .models import Order, PosReceipt
 
 
 def tracking_token(order_id):
-    # Stable, unguessable receipt capability; grants status access only.
+    # Stable receipt capability for status access and a completed-order review.
     return signing.Signer(salt='receipt-order-status').sign(str(order_id))
 
 
@@ -87,7 +87,8 @@ class ReceiptTrackingView(APIView):
             raise NotFound('This order tracking link is invalid.')
         order = get_object_or_404(Order.objects.select_related('branch', 'table'), pk=order_id)
         from .preparation import rounds
-        response = Response({'order_number': order.order_number, 'outlet_id': order.branch_id,
+        from apps.customer_web.review_services import review_data
+        response = Response({'order_number': order.order_number, 'outlet_id': order.branch_id, 'review': review_data(order),
             'rounds': [{key:value for key,value in row.items() if key != 'item_ids'} for row in rounds(order)],
             'outlet_name': order.branch.name, 'status': order.status, 'fulfillment_type': order.fulfillment_type,
             'table_number': order.table.table_number if order.table_id else None,

@@ -15,6 +15,7 @@ from .journey_selectors import bounds
 
 logger = logging.getLogger(__name__)
 NEPAL_TIMEZONE = ZoneInfo('Asia/Kathmandu')
+CHAT_EVENTS = ('chat_icon_click', 'chat_message_sent', 'chat_message_failed', 'chat_closed')
 
 VISITOR_ACTIONS = (
     'add_to_cart', 'remove_from_cart', 'cart_clear', 'cart_view',
@@ -29,7 +30,7 @@ VISITOR_ACTIONS = (
     'payment_proof_rejected',
     'api_error', 'network_error', 'javascript_error', 'image_error',
     'call_click', 'whatsapp_click',
-)
+) + CHAT_EVENTS
 
 FUNNEL_STAGES = (
     ('Visit', 'visit_at > epoch'),
@@ -106,7 +107,7 @@ def visitor_overview(branch, config, start, end, force_refresh=False):
             'message': 'Add a read-only PostHog Personal API Key to the backend as POSTHOG_QUERY_API_KEY to show visitor charts here.',
         }
 
-    cache_key = f'posthog-overview:v2:{branch.pk}:{config["project_url"]}:{start.isoformat()}:{end.isoformat()}'
+    cache_key = f'posthog-overview:v3:{branch.pk}:{config["project_url"]}:{start.isoformat()}:{end.isoformat()}'
     cached = None if force_refresh else cache.get(cache_key)
     if cached is not None:
         return cached
@@ -205,6 +206,26 @@ def visitor_overview(branch, config, start, end, force_refresh=False):
             GROUP BY event, category
             ORDER BY events DESC
         """)
+        chat_events = _posthog_rows(config, f"""
+            SELECT event, count() AS events, countDistinct(distinct_id) AS visitors
+            FROM events
+            WHERE {time_filter} AND {scope}
+              AND event IN ({', '.join(repr(event) for event in CHAT_EVENTS)})
+            GROUP BY event
+        """)
+        chat_pages = _posthog_rows(config, f"""
+            SELECT properties.path AS path,
+                   countIf(event = 'chat_icon_click') AS opens,
+                   countIf(event = 'chat_message_sent') AS messages,
+                   countIf(event = 'chat_message_failed') AS failures,
+                   countDistinct(distinct_id) AS visitors
+            FROM events
+            WHERE {time_filter} AND {scope}
+              AND event IN ({', '.join(repr(event) for event in CHAT_EVENTS)})
+            GROUP BY path
+            ORDER BY opens DESC, messages DESC
+            LIMIT 25
+        """)
         if not totals or len(totals[0]) < 3:
             raise ValueError('PostHog returned incomplete visitor totals.')
         funnel_counts = funnel[0] if funnel else [0] * len(FUNNEL_STAGES)
@@ -225,6 +246,15 @@ def visitor_overview(branch, config, start, end, force_refresh=False):
             'unique_visitors': int(totals[0][0] or 0),
             'sessions': int(totals[0][1] or 0),
             'page_views': int(totals[0][2] or 0),
+            'chat_events': [
+                {'event': str(row[0]), 'events': int(row[1] or 0), 'visitors': int(row[2] or 0)}
+                for row in chat_events if len(row) >= 3
+            ],
+            'chat_pages': [
+                {'path': str(row[0] or '/'), 'opens': int(row[1] or 0), 'messages': int(row[2] or 0),
+                 'failures': int(row[3] or 0), 'visitors': int(row[4] or 0)}
+                for row in chat_pages if len(row) >= 5
+            ],
             'daily': daily_month,
             'top_events': [
                 {'event': str(row[0]), 'events': int(row[1] or 0), 'visitors': int(row[2] or 0)}
