@@ -68,3 +68,19 @@ class KhajaScheduleView(StaffAPIView):
         serializer = ScheduleInput(data=request.data)
         serializer.is_valid(raise_exception=True)
         return Response(save_day(branch, request.user, serializer.validated_data))
+
+
+class AttendanceView(StaffAPIView):
+    def get(self, request):
+        from .attendance import MonthQuery, month_data
+        branch = staff_branch(request, 'daybook')
+        query = MonthQuery(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        return Response(month_data(branch, query.validated_data))
+
+    def post(self, request):
+        from .attendance import AttendanceInput, save_attendance
+        branch = staff_branch(request, 'daybook')
+        serializer = AttendanceInput(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return Response(save_attendance(branch, request.user, serializer.validated_data))

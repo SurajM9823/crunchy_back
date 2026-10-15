@@ -65,3 +65,26 @@ class KhajaScheduleDay(models.Model):
             models.UniqueConstraint(fields=['branch', 'weekday'], name='khaja_outlet_weekday'),
             models.CheckConstraint(condition=models.Q(weekday__gte=0, weekday__lte=6), name='khaja_valid_weekday'),
         ]
+
+
+class StaffAttendance(models.Model):
+    branch = models.ForeignKey('restaurants.Branch', on_delete=models.PROTECT)
+    staff = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='attendance_records')
+    date = models.DateField()
+    status = models.CharField(max_length=12, choices=[(s, s) for s in ['PRESENT', 'ABSENT', 'FIRST_HALF', 'SECOND_HALF', 'UNMARKED']])
+    revision = models.PositiveIntegerField(default=0)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='+')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['branch', 'staff', 'date'], name='attendance_staff_date'),
+            models.CheckConstraint(condition=models.Q(status__in=['PRESENT', 'ABSENT', 'FIRST_HALF', 'SECOND_HALF', 'UNMARKED']), name='attendance_valid_status')]
+        indexes = [models.Index(fields=['branch', 'date'], name='attendance_branch_date')]
+
+
+class StaffAttendanceChange(models.Model):
+    attendance = models.ForeignKey(StaffAttendance, on_delete=models.PROTECT, related_name='changes')
+    previous_status = models.CharField(max_length=12)
+    status = models.CharField(max_length=12)
+    recorded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
