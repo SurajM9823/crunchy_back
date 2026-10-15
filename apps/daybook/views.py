@@ -49,3 +49,9 @@ class SocketTicketView(StaffAPIView):
         branch = staff_branch(request, 'daybook')
         ticket = signing.dumps({'user_id': request.user.pk, 'branch_id': branch.pk}, salt='daybook-socket')
         return Response({'ticket': ticket, 'path': f'/ws/daybook/{branch.pk}/'})
+
+
+class StaffChoicesView(StaffAPIView):
+    def get(self, request):
+        branch = staff_branch(request, 'daybook')
+        return Response(selectors.staff_choices(branch))

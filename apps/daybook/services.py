@@ -6,7 +6,7 @@ from rest_framework.exceptions import NotFound, ValidationError
 from apps.orders.pos_services import Conflict
 from apps.restaurants.models import Branch
 from .models import DaybookEntry, DaybookEvent, DaybookMutation
-from .selectors import entry_data, importable_payments
+from .selectors import entry_data, importable_payments, outlet_staff
 from .serializers import METHODS
 
 
@@ -24,6 +24,12 @@ def mutate(branch, actor, key, action, data, entry_id=None):
             raise Conflict('This entry was removed with its order.')
         return previous.response
     if action == 'create':
+        if data.get('staff_id'):
+            staff = outlet_staff(branch).filter(pk=data['staff_id'], is_active=True).first()
+            employee = getattr(staff, 'employee_profile', None) if staff else None
+            if not staff or (employee and not employee.is_active):
+                raise ValidationError({'staff_id': 'Choose active staff assigned to this outlet.'})
+            data = {**data, 'party': employee.name if employee else (staff.get_full_name() or staff.username or str(staff.pk))}
         row = DaybookEntry.objects.create(branch=branch, recorded_by=actor, **data)
         result = entry_data(row)
     elif action == 'void':

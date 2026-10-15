@@ -60,6 +60,46 @@ class DaybookTests(TestCase):
     def import_payments(self, ids, **extra):
         return self.post('import/', {'date':today().isoformat(), 'kind':'SALE', 'payment_ids':ids, **extra})
 
+    def test_staff_ledger_scope_balances_void_and_retry(self):
+        previous = (today()-timedelta(days=1)).isoformat()
+        self.entry(staff_id=self.cashier.pk, date=previous, direction='OUT', amount='200')
+        payload = {'staff_id': self.cashier.pk, 'direction': 'IN', 'amount': '50',
+                   'category': 'Staff return', 'description': 'Returned cash', 'party': 'Forged name'}
+        first = self.post(data=payload, key='staff-retry')
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(first.data, self.post(data=payload, key='staff-retry').data)
+        self.assertEqual(first.data['party'], self.cashier.username)
+        self.entry(staff_id=self.chef.pk, direction='OUT', amount='25')
+        self.entry(amount='900')
+        params = {'staff_only': 'true', 'staff_id': self.cashier.pk}
+        result = self.client.get(self.path(), params).data
+        self.assertEqual(result['count'], 1)
+        self.assertEqual(result['summary']['opening'], '-200.00')
+        self.assertEqual(result['summary']['closing'], '-150.00')
+        self.assertEqual(self.client.get(self.path(), {'staff_only':'true'}).data['count'], 2)
+        self.assertEqual(self.client.get(self.path()).data['count'], 3)
+        self.assertEqual(self.post(f"{first.data['id']}/void/", {'reason':'Correction'}).status_code, 200)
+        self.assertEqual(self.client.get(self.path(), params).data['summary']['closing'], '-200.00')
+
+    def test_staff_outlet_validation_and_historical_choices(self):
+        from apps.user_accounts.models import User
+        outsider = User.objects.create(username='outside', role='CASHIER', branch=self.other)
+        payload = {'direction':'OUT', 'amount':'10', 'category':'Staff advance', 'description':'Advance'}
+        for staff_id in [outsider.pk, self.owner.pk, 999999]:
+            self.assertEqual(self.post(data={**payload, 'staff_id':staff_id}).status_code, 400)
+        self.entry(staff_id=self.cashier.pk, direction='OUT')
+        self.cashier.branch = self.other
+        self.cashier.save()
+        choices = self.client.get(self.path('staff/')).data
+        self.assertNotIn(outsider.pk, [row['id'] for row in choices])
+        self.assertFalse(next(row for row in choices if row['id']==self.cashier.pk)['active'])
+        self.assertEqual(self.post(data={**payload, 'staff_id':self.cashier.pk}).status_code, 400)
+        Employee.objects.create(id='staff-daybook-profile', user=self.chef, name='Chef profile',
+            email='chef-daybook@example.com', phone='9800000033', assigned_outlet=self.other)
+        self.assertEqual(self.post(data={**payload, 'staff_id':self.chef.pk}).status_code, 400)
+        self.client.force_authenticate(outsider)
+        self.assertEqual(self.client.get(self.path('staff/')).status_code, 403)
+
     def test_empty_ledger_and_in_out_cash_and_opening_balances(self):
         empty = self.client.get(self.path()).data
         self.assertEqual(empty['results'], [])

@@ -11,6 +11,7 @@ def today():
 
 
 class EntryInput(serializers.Serializer):
+    staff_id = serializers.IntegerField(min_value=1, required=False)
     date = serializers.DateField(default=today)
     direction = serializers.ChoiceField(choices=['IN', 'OUT'])
     amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0.01'))
@@ -27,6 +28,8 @@ class EntryInput(serializers.Serializer):
 
 
 class LedgerQuery(serializers.Serializer):
+    staff_only = serializers.BooleanField(default=False)
+    staff_id = serializers.IntegerField(min_value=1, required=False)
     date = serializers.DateField(default=today)
     direction = serializers.ChoiceField(choices=['ALL', 'IN', 'OUT'], default='ALL')
     payment_method = serializers.ChoiceField(choices=['ALL']+METHODS, default='ALL')

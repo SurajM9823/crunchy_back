@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import EntriesView, ImportView, VoidView, SocketTicketView
+from .views import EntriesView, ImportView, VoidView, SocketTicketView, StaffChoicesView
 
-urlpatterns = [path('', EntriesView.as_view()), path('import/', ImportView.as_view()),
+urlpatterns = [path('staff/', StaffChoicesView.as_view()), path('', EntriesView.as_view()), path('import/', ImportView.as_view()),
     path('<int:entry_id>/void/', VoidView.as_view()), path('socket-ticket/', SocketTicketView.as_view())]

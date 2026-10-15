@@ -10,7 +10,7 @@ ZERO = Decimal('0.00')
 
 
 def entry_data(row):
-    return {'id': row.pk, 'date': row.date.isoformat(), 'direction': row.direction, 'amount': str(row.amount),
+    return {'staff_id': row.staff_id, 'id': row.pk, 'date': row.date.isoformat(), 'direction': row.direction, 'amount': str(row.amount),
         'payment_method': row.payment_method, 'category': row.category, 'party': row.party,
         'description': row.description, 'reference': row.reference, 'source': row.source,
         'recorded_by': row.recorded_by.get_full_name() or row.recorded_by.username,
@@ -27,6 +27,10 @@ def amounts(rows):
 
 def ledger(branch, query, can_void):
     rows = DaybookEntry.objects.filter(branch=branch)
+    if query.get('staff_only'):
+        rows = rows.filter(staff__isnull=False)
+    if query.get('staff_id'):
+        rows = rows.filter(staff_id=query['staff_id'])
     active = rows.filter(voided_at__isnull=True)
     incoming, outgoing, net = amounts(active.filter(date=query['date']))
     opening = amounts(active.filter(date__lt=query['date']))[2]
@@ -77,3 +81,24 @@ def import_preview(branch, date, kind):
             'imported': entry is not None, 'voided': bool(entry and entry.voided_at)})
     return {'date': date.isoformat(), 'kind': kind, 'count': count, 'results': rows,
             'truncated': count > 5000}
+
+
+def outlet_staff(branch):
+    from django.contrib.auth import get_user_model
+    return get_user_model().objects.filter(
+        Q(employee_profile__assigned_outlet=branch) |
+        Q(employee_profile__isnull=True, branch=branch, role__in=['BRANCH_MANAGER', 'CHEF', 'WAITER', 'CASHIER', 'RIDER'])
+    ).select_related('employee_profile').order_by('first_name', 'username', 'pk')
+
+
+def staff_choices(branch):
+    from django.contrib.auth import get_user_model
+    current = outlet_staff(branch)
+    historical = get_user_model().objects.filter(staff_daybook_entries__branch=branch).exclude(pk__in=current).distinct()
+    result = []
+    for user in [*current, *historical]:
+        employee = getattr(user, 'employee_profile', None)
+        assigned = employee.assigned_outlet_id == branch.pk if employee else user.branch_id == branch.pk
+        active = assigned and user.is_active and (employee.is_active if employee else True)
+        result.append({'id': user.pk, 'name': employee.name if employee else (user.get_full_name() or user.username or str(user.pk)), 'active': bool(active)})
+    return result

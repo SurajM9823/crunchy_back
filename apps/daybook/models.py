@@ -6,6 +6,7 @@ from django.utils import timezone
 
 class DaybookEntry(models.Model):
     branch = models.ForeignKey('restaurants.Branch', on_delete=models.PROTECT)
+    staff = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name='staff_daybook_entries')
     date = models.DateField()
     direction = models.CharField(max_length=3, choices=[('IN', 'Money in'), ('OUT', 'Money out')])
     amount = models.DecimalField(max_digits=12, decimal_places=2)
