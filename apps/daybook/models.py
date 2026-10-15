@@ -50,3 +50,18 @@ class DaybookEvent(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=['published_at', 'next_attempt_at'], name='daybook_events_pending')]
+
+
+class KhajaScheduleDay(models.Model):
+    branch = models.ForeignKey('restaurants.Branch', on_delete=models.CASCADE)
+    weekday = models.PositiveSmallIntegerField()
+    products = models.ManyToManyField('catalog.Product', blank=True)
+    revision = models.PositiveIntegerField(default=0)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['branch', 'weekday'], name='khaja_outlet_weekday'),
+            models.CheckConstraint(condition=models.Q(weekday__gte=0, weekday__lte=6), name='khaja_valid_weekday'),
+        ]

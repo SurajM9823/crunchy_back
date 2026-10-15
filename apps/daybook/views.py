@@ -55,3 +55,16 @@ class StaffChoicesView(StaffAPIView):
     def get(self, request):
         branch = staff_branch(request, 'daybook')
         return Response(selectors.staff_choices(branch))
+
+
+class KhajaScheduleView(StaffAPIView):
+    def get(self, request):
+        from .khaja import schedule_data
+        return Response(schedule_data(staff_branch(request, 'daybook')))
+
+    def post(self, request):
+        from .khaja import ScheduleInput, save_day
+        branch = staff_branch(request, 'daybook')
+        serializer = ScheduleInput(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return Response(save_day(branch, request.user, serializer.validated_data))
