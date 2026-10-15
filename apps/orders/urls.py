@@ -1,4 +1,5 @@
 from django.urls import path
+from .report_views import SalesReportView
 from .pos_views import PosDashboardView
 from .push_views import MobilePushDeviceView
 from .announcement_views import PickupAnnouncementView
@@ -15,6 +16,7 @@ from .views import (
 )
 
 urlpatterns = [
+    path('pos/reports/sales/', SalesReportView.as_view(), name='sales-report'),
     path('display/<int:outlet_id>/announcement/', PickupAnnouncementView.as_view()),
     path('self-service/items/void/', SelfServiceVoidView.as_view()),
     path('tracking/', ReceiptTrackingView.as_view()),
