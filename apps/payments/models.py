@@ -158,3 +158,14 @@ class FiscalInvoice(models.Model):
     def __str__(self):
         return f"{self.invoice_number} - NPR {self.grand_total} (PAN: {self.seller_pan})"
 
+
+
+class PaymentMethodCorrection(models.Model):
+    branch = models.ForeignKey('restaurants.Branch', on_delete=models.PROTECT)
+    kind = models.CharField(max_length=16)
+    target = models.CharField(max_length=128)
+    previous_method = models.CharField(max_length=32)
+    method = models.CharField(max_length=32)
+    reason = models.CharField(max_length=500)
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)

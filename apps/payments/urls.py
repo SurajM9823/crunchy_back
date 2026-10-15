@@ -1,4 +1,5 @@
 from django.urls import path
+from .corrections import PaymentMethodView
 from .views import (
     PaymentSettleAPIView,
     InvoiceDetailAPIView,
@@ -6,6 +7,7 @@ from .views import (
 )
 
 urlpatterns = [
+    path('correct-method/', PaymentMethodView.as_view()),
     # Payment Settlement Endpoint (Cash, Card, QR)
     path('settle/', PaymentSettleAPIView.as_view(), name='payment-settle'),
 

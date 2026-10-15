@@ -232,6 +232,11 @@ def record_tenders(order, tenders, actor):
     order.paid_amount += paid
     order.payment_status = 'PAID' if order.paid_amount >= order.total_payable else 'UNPAID'
     order.billed_at = timezone.now()
+    methods = set(order.payments.filter(status='SUCCESS').values_list('payment_method', flat=True))
+    if order.credit_amount:
+        methods.add('CREDIT')
+    if methods:
+        order.payment_method = next(iter(methods)) if len(methods) == 1 else 'SPLIT'
 
 
 def receipt(order, kind, sequence):
