@@ -311,7 +311,9 @@ def mutate(branch, actor, key, action, data, order_id=None):
         if not order: raise NotFound('Order not found at this outlet.')
         if order.version != data['version']: raise Conflict()
         previous = order.status
-        if action == 'customer':
+        if action == 'fulfillment':
+            correct_fulfillment(order, branch, data)
+        elif action == 'customer':
             data['reason'] = f'Customer correction: {order.customer_name} / {order.customer_phone} -> {data.get("customer_name", order.customer_name)} / {data.get("customer_phone", order.customer_phone)}'
             for field in ('customer_name', 'customer_phone'):
                 if field in data:
@@ -421,3 +423,39 @@ def mutate(branch, actor, key, action, data, order_id=None):
     OrderOutboxEvent.objects.create(branch=branch,order=order,event_type=f'ORDER_{action.upper()}',payload={'version':order.version, 'round_number':data.get('round_number'), 'round_status':data.get('status') if action=='round' else None})
     PosMutation.objects.create(branch=branch,key=key,fingerprint=fingerprint,response=response)
     return response
+
+
+def correct_fulfillment(order, branch, data):
+    if order.status in ('CANCELLED', 'OUT_FOR_DELIVERY'):
+        raise ValidationError('Cancelled or dispatched orders cannot change table or order type.')
+    fulfillment = data['fulfillment_type']
+    enabled = {'DINE_IN': 'enable_dine_in', 'TAKEAWAY': 'enable_takeaway',
+               'DELIVERY': 'enable_delivery', 'DRIVE_THRU': 'enable_drive_thru'}
+    if not getattr(branch, enabled[fulfillment]):
+        raise ValidationError('This order type is disabled at this outlet.')
+    table = None
+    if fulfillment == 'DINE_IN':
+        table = DiningTable.objects.select_for_update().filter(pk=data.get('table_id'), branch=branch, is_active=True).first()
+        if not table:
+            raise ValidationError('Choose an active table at this outlet.')
+        if Order.objects.filter(branch=branch, table=table, status__in=ACTIVE).exclude(pk=order.pk).exists():
+            raise Conflict('This table is occupied. Choose another table.')
+    elif data.get('table_id'):
+        raise ValidationError('Only dine-in orders can have a table.')
+    address = data.get('delivery_address', order.delivery_address)
+    if fulfillment == 'DELIVERY' and (not address.strip() or not order.customer_phone.strip()):
+        raise ValidationError('Delivery requires an address and customer phone number.')
+    previous = f'{order.fulfillment_type} / {order.table.table_number if order.table else "no table"}'
+    if order.table_id != (table.pk if table else None):
+        if order.table_id:
+            DiningTable.objects.filter(pk=order.table_id, active_session_id=order.table_session_id).update(active_session_id=None)
+        order.table_session_id = uuid.uuid4() if table else None
+    order.table = table
+    order.fulfillment_type = fulfillment
+    order.delivery_address = address if fulfillment == 'DELIVERY' else ''
+    if table and order.status in ACTIVE:
+        if not order.table_session_id:
+            order.table_session_id = uuid.uuid4()
+        table.active_session_id = order.table_session_id
+        table.save(update_fields=['active_session_id', 'updated_at'])
+    data['reason'] = f'Order correction: {previous} -> {fulfillment} / {table.table_number if table else "no table"}. {data["reason"]}'

@@ -9,7 +9,7 @@ from apps.restaurants.models import Restaurant, Branch
 from apps.tables.models import DiningTable
 from apps.catalog.models import Category, Product, ProductVariant, ModifierGroup, ModifierOption
 from apps.inventory.models import InventoryItem, RecipeItem, StockTransaction
-from .models import Order, OrderItem, OrderOutboxEvent, PosMutation, PosCreditEntry
+from .models import Order, OrderItem, OrderOutboxEvent, PosMutation, PosCreditEntry, PosReceipt
 from .tasks import publish_pos_events
 
 
@@ -55,6 +55,37 @@ class PosWorkflowTests(TestCase):
         self.client.force_authenticate(self.chef)
         denied = self.post(f'{order["id"]}/customer/', {'version': corrected['version'], 'customer_name': 'Denied'})
         self.assertEqual(denied.status_code, 403)
+
+    def test_correct_table_and_type_preserves_money_and_releases_tables(self):
+        second = DiningTable.objects.create(branch=self.branch, table_number='A2')
+        order = self.create(fulfillment_type='DINE_IN', table_id=self.table.pk)
+        order = self.command(order, 'fulfillment', fulfillment_type='DINE_IN', table_id=second.pk, reason='Wrong table')
+        self.assertEqual(order['table_id'], second.pk)
+        self.table.refresh_from_db(); second.refresh_from_db()
+        self.assertIsNone(self.table.active_session_id)
+        self.assertIsNotNone(second.active_session_id)
+        order = self.command(order, 'bill')
+        saved = list(PosReceipt.objects.filter(order_id=order['id']).values_list('snapshot', flat=True))
+        corrected = self.command(order, 'fulfillment', fulfillment_type='TAKEAWAY', table_id=None, reason='Customer taking away')
+        self.assertIsNone(corrected['table_id'])
+        self.assertEqual(corrected['total_payable'], order['total_payable'])
+        self.assertEqual(list(PosReceipt.objects.filter(order_id=order['id']).values_list('snapshot', flat=True)), saved)
+        second.refresh_from_db(); self.assertIsNone(second.active_session_id)
+        stale = self.post(f'{order["id"]}/fulfillment/', {'version': order['version'], 'fulfillment_type': 'TAKEAWAY', 'reason': 'Stale'})
+        self.assertEqual(stale.status_code, 409)
+
+    def test_correct_fulfillment_rejects_occupied_cross_outlet_and_incomplete_delivery(self):
+        occupied = self.create(fulfillment_type='DINE_IN', table_id=self.table.pk)
+        order = self.create()
+        other_table = DiningTable.objects.create(branch=self.other, table_number='Other')
+        for table_id, expected in [(self.table.pk, 409), (other_table.pk, 400)]:
+            result = self.post(f'{order["id"]}/fulfillment/', {'version': order['version'], 'fulfillment_type': 'DINE_IN', 'table_id': table_id, 'reason': 'Correction'})
+            self.assertEqual(result.status_code, expected, result.data)
+        result = self.post(f'{order["id"]}/fulfillment/', {'version': order['version'], 'fulfillment_type': 'DELIVERY', 'reason': 'Correction'})
+        self.assertEqual(result.status_code, 400)
+        self.client.force_authenticate(self.chef)
+        result = self.post(f'{order["id"]}/fulfillment/', {'version': order['version'], 'fulfillment_type': 'TAKEAWAY', 'reason': 'Correction'})
+        self.assertEqual(result.status_code, 403)
 
     def path(self,suffix=''):
         return f'/api/v1/orders/pos/{suffix}?outlet_id={self.branch.pk}'

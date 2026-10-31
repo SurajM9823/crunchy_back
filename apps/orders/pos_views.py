@@ -10,7 +10,7 @@ from .pos_selectors import list_orders, order_queryset, order_data
 from .pos_services import quote, mutate, totals, order_totals
 from decimal import Decimal
 from .pos_serializers import (PosListSerializer, PosQuoteSerializer, PosCreateSerializer, PosAppendSerializer,
-    PosSettleSerializer, PosTransitionSerializer, PosVoidSerializer, PosRefundSerializer, VersionSerializer, PosBillQuoteSerializer, PosRoundSerializer, PosCallSerializer, PosBillSerializer, PosCustomerEditSerializer)
+    PosSettleSerializer, PosTransitionSerializer, PosVoidSerializer, PosRefundSerializer, VersionSerializer, PosBillQuoteSerializer, PosRoundSerializer, PosCallSerializer, PosBillSerializer, PosCustomerEditSerializer, PosFulfillmentEditSerializer)
 from .models import PosReceipt, Order
 
 
@@ -136,7 +136,7 @@ class PosBillQuoteView(StaffAPIView):
 class PosCommandView(StaffAPIView):
     def post(self,request,order_id,action):
         branch=staff_branch(request)
-        serializers={'customer':PosCustomerEditSerializer,'append':PosAppendSerializer,'settle':PosSettleSerializer,'transition':PosTransitionSerializer,
+        serializers={'fulfillment':PosFulfillmentEditSerializer,'customer':PosCustomerEditSerializer,'append':PosAppendSerializer,'settle':PosSettleSerializer,'transition':PosTransitionSerializer,
             'void':PosVoidSerializer,'refund':PosRefundSerializer,'call':PosCallSerializer,'round':PosRoundSerializer,'bill':PosBillSerializer}
         serializer=serializers[action](data=request.data)
         serializer.is_valid(raise_exception=True)

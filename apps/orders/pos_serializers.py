@@ -134,3 +134,10 @@ class PosCustomerEditSerializer(VersionSerializer):
         if not any(field in values for field in ('customer_name', 'customer_phone')):
             raise serializers.ValidationError('Enter a name or phone to update.')
         return values
+
+
+class PosFulfillmentEditSerializer(VersionSerializer):
+    fulfillment_type = serializers.ChoiceField(choices=FulfillmentType.choices)
+    table_id = serializers.IntegerField(min_value=1, required=False, allow_null=True)
+    delivery_address = serializers.CharField(max_length=1000, allow_blank=True, required=False)
+    reason = serializers.CharField(max_length=180)

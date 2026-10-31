@@ -41,7 +41,7 @@ def customer_account(branch, contact_id, actor):
             for p in order.payments.all())
         credits.extend({'id': p.pk, 'order_number': order.order_number, 'amount': str(p.amount), 'reason': p.reason, 'date': p.created_at}
             for p in order.credit_entries.all())
-    return {'can_manage_discount': can_access(actor, branch, 'discount'), 'customer': {'discount_percent': str(contact.discount_percent), 'discount_remark': contact.discount_remark, 'id': contact.pk, 'name': contact.name or 'Guest', 'phone': contact.phone,
+    return {'can_edit_identity': can_access(actor, branch, 'orders'), 'can_manage_discount': can_access(actor, branch, 'discount'), 'customer': {'discount_percent': str(contact.discount_percent), 'discount_remark': contact.discount_remark, 'id': contact.pk, 'name': contact.name or 'Guest', 'phone': contact.phone,
         'email': contact.user.email if contact.user else '', 'registered': bool(contact.user_id), 'sources': contact.sources},
         'summary': {'orders': len(rows), 'order_total': str(total), 'received': str(sum((row.account_paid for row in rows), Decimal('0'))),
             'refunded': str(sum((row.account_refunded for row in rows), Decimal('0'))), 'due': str(due), 'credit': str(credit)},

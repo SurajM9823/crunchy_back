@@ -41,7 +41,7 @@ urlpatterns = [
     path('pos/<int:order_id>/delete/', PosDeleteView.as_view()),
     path('pos/<int:order_id>/', PosDetailView.as_view()),
     path('pos/<int:order_id>/billing-quote/', PosBillQuoteView.as_view()),
-    *[path(f'pos/<int:order_id>/{action}/', PosCommandView.as_view(), {'action':action}) for action in ['append','settle','transition','void','refund','call','bill','round','customer']],
+    *[path(f'pos/<int:order_id>/{action}/', PosCommandView.as_view(), {'action':action}) for action in ['append','settle','transition','void','refund','call','bill','round','customer','fulfillment']],
     # Universal Checkout API (Table QR, POS, Kiosk, Customer App)
     path('checkout/', CheckoutAPIView.as_view(), name='order-checkout'),
 
