@@ -22,6 +22,33 @@ class CustomerAccountTests(TestCase):
         self.client = APIClient()
         self.client.force_authenticate(self.owner)
 
+    def test_add_member_discount_retry_and_duplicate_phone(self):
+        from .models import CustomerContact
+        from apps.loyalty.services import offer
+        path = f'/api/v1/customer/directory/?outlet_id={self.branch.pk}'
+        body = {'name': 'New member', 'phone': '9841234567', 'discount_percent': '12.50', 'discount_remark': 'Member rate'}
+        response = self.client.post(path, body, format='json', HTTP_IDEMPOTENCY_KEY='member-create')
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['phone'], '+9779841234567')
+        retry = self.client.post(path, body, format='json', HTTP_IDEMPOTENCY_KEY='member-create')
+        self.assertEqual(retry.data['id'], response.data['id'])
+        self.assertEqual(CustomerContact.objects.count(), 1)
+        duplicate = self.client.post(path, {**body, 'phone': '+977 9841234567'}, format='json', HTTP_IDEMPOTENCY_KEY='member-other')
+        self.assertEqual(duplicate.status_code, 400)
+        self.assertEqual(offer(self.branch, body['phone'], 200)['amount'], '25.00')
+        self.assertEqual(self.account(response.data['id'])['customer']['discount_remark'], 'Member rate')
+
+    def test_add_member_validation_and_outlet_access(self):
+        from .models import CustomerContact
+        path = f'/api/v1/customer/directory/?outlet_id={self.branch.pk}'
+        for body in [{'name': 'Test', 'phone': 'abc'}, {'name': 'Test', 'phone': '9841234567', 'discount_percent': '101'}, {'name': '', 'phone': '9841234567'}]:
+            response = self.client.post(path, body, format='json', HTTP_IDEMPOTENCY_KEY='invalid-member')
+            self.assertEqual(response.status_code, 400, response.data)
+        response = self.client.post(f'/api/v1/customer/directory/?outlet_id={self.other_branch.pk}',
+            {'name': 'Test', 'phone': '9841234567'}, format='json', HTTP_IDEMPOTENCY_KEY='wrong-outlet')
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(CustomerContact.objects.exists())
+
     def order(self, **data):
         defaults = dict(branch=self.branch, order_number=f'ACC-{Order.objects.count()}', customer_name='Real customer',
             customer_phone='9841234567', total_payable=100, subtotal=100, is_pos_managed=True,

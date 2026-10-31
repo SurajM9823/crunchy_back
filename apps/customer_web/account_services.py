@@ -96,3 +96,31 @@ def save_customer_discount(branch, actor, contact_id, values):
     contact.discount_percent = values['discount_percent']
     contact.discount_remark = values['discount_remark']
     contact.save(update_fields=['discount_percent', 'discount_remark'])
+
+
+@transaction.atomic
+def create_member(branch, actor, values, key):
+    from .audience_services import remember_contact
+    require_access(actor, branch, 'orders')
+    if values['discount_percent'] or values['discount_remark']:
+        require_access(actor, branch, 'discount')
+    if not key or len(key) > 128:
+        raise ValidationError('A valid request key is required.')
+    fingerprint = hashlib.sha256(json.dumps({'action': 'create_member', **values}, sort_keys=True, default=str).encode()).hexdigest()
+    Branch.objects.select_for_update().get(pk=branch.pk)
+    previous = CustomerAccountMutation.objects.filter(branch=branch, key=key).first()
+    if previous:
+        if previous.fingerprint != fingerprint:
+            raise Conflict('This request key was already used for different details.')
+        return previous.response
+    if CustomerContact.objects.filter(branch=branch, phone=values['phone']).exists():
+        raise ValidationError('A customer with this phone already exists. Search for them to edit their discount.')
+    contact = remember_contact(branch.pk, values['phone'], values['name'], 'MEMBER')
+    contact.discount_percent = values['discount_percent']
+    contact.discount_remark = values['discount_remark']
+    contact.save(update_fields=['discount_percent', 'discount_remark'])
+    result = {'id': contact.pk, 'name': contact.name, 'phone': contact.phone,
+              'discount_percent': str(contact.discount_percent), 'discount_remark': contact.discount_remark}
+    CustomerAccountMutation.objects.create(branch=branch, key=key, fingerprint=fingerprint, response=result)
+    DaybookEvent.objects.create(branch=branch, event_type='CUSTOMER_ACCOUNT_UPDATED')
+    return result

@@ -90,8 +90,29 @@ class WebsiteAnalyticsView(APIView):
             'pages':list(visits.values('path').annotate(page_views=Count('pk')).order_by('-page_views')[:8])})
 
 
+class MemberInput(serializers.Serializer):
+    name = serializers.CharField(max_length=150)
+    phone = serializers.CharField(max_length=32)
+    discount_percent = serializers.DecimalField(max_digits=5, decimal_places=2, min_value=0, max_value=100, default=0)
+    discount_remark = serializers.CharField(max_length=180, allow_blank=True, default='')
+
+    def validate_phone(self, value):
+        if not re.fullmatch(r'[+\d\s().-]+', value) or len(re.sub(r'\D', '', value)) < 7:
+            raise serializers.ValidationError('Enter a valid phone number.')
+        return contact_phone(value)
+
+
 class CustomerDirectoryView(WebsiteAnalyticsView):
     permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .account_services import create_member
+        branch = audience_branch(request)
+        serializer = MemberInput(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return Response(create_member(branch, request.user, serializer.validated_data,
+            request.headers.get('Idempotency-Key')), status=201)
+
 
     def get(self, request):
         branch = audience_branch(request)
@@ -115,7 +136,8 @@ class CustomerDirectoryView(WebsiteAnalyticsView):
             credit=Sum('account_credit', default=Decimal('0')),
             order_total=Sum('total_payable', filter=~Q(status='CANCELLED'), default=Decimal('0')),
         )}
-        return Response({'count':count,'page':page,'page_size':25,'results':[
+        from apps.orders.pos_access import can_access
+        return Response({'can_add_member': can_access(request.user, branch, 'orders'), 'can_manage_discount': can_access(request.user, branch, 'discount'), 'count':count,'page':page,'page_size':25,'results':[
             {'id':row.pk,'name':row.name or 'Guest','phone':row.phone,'email':row.user.email if row.user else '',
              'registered':bool(row.user_id),'sources':row.sources,'last_seen':row.last_seen,'last_login':row.last_login,
              'due':stats.get(row.pk, {}).get('due', Decimal('0')),
