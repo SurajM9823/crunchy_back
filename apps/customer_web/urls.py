@@ -3,7 +3,7 @@ from .journey_views import EventBatchView, IntelligenceView, JourneyListView, Jo
 from .journey_views import AnalystView
 from .posthog_views import TrackingConfigView, ReportingOverviewView
 from django.urls import path
-from .account_views import CustomerAccountView, CustomerAccountReceiptView
+from .account_views import CustomerAccountView, CustomerAccountReceiptView, CustomerIdentityView
 from .auth import CustomerAuthView
 from .views import ProfileView, FavoriteView, CheckoutMetaView, QuoteView, CheckoutView, OrdersView, GuestOrderTrackingView, CancelView, PaymentProofView, SocketTicketView
 from .views import AddressView, AddressDetailView, CartView
@@ -25,6 +25,7 @@ urlpatterns = [
     path('traffic/', WebsiteVisitView.as_view()),
     path('analytics/', WebsiteAnalyticsView.as_view()),
     path('directory/', CustomerDirectoryView.as_view()),
+    path('directory/<int:contact_id>/identity/', CustomerIdentityView.as_view()),
     path('directory/<int:contact_id>/', CustomerAccountView.as_view()),
     path('directory/<int:contact_id>/receive/', CustomerAccountView.as_view()),
     path('directory/<int:contact_id>/receipts/<int:receipt_id>/', CustomerAccountReceiptView.as_view()),

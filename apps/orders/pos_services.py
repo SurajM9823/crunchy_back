@@ -311,7 +311,17 @@ def mutate(branch, actor, key, action, data, order_id=None):
         if not order: raise NotFound('Order not found at this outlet.')
         if order.version != data['version']: raise Conflict()
         previous = order.status
-        if action == 'append':
+        if action == 'customer':
+            data['reason'] = f'Customer correction: {order.customer_name} / {order.customer_phone} -> {data.get("customer_name", order.customer_name)} / {data.get("customer_phone", order.customer_phone)}'
+            for field in ('customer_name', 'customer_phone'):
+                if field in data:
+                    setattr(order, field, data[field])
+            if order.credit_amount and (not order.customer_phone.strip() or order.customer_name in ('', 'Guest', 'Walk-in Guest')):
+                raise ValidationError('Credit orders require a customer name and phone.')
+            # Corrections remain possible after billing; financial history stays frozen.
+            if order.status != 'CANCELLED':
+                apply_totals(order)
+        elif action == 'append':
             if not append_allowed(order): raise ValidationError('New rounds require an unbilled, unpaid POS, kiosk or table order that is not cancelled or out for delivery.')
             if not branch.accepting_orders: raise ValidationError('This outlet is not accepting new rounds.')
             if order.status == 'COMPLETED' and order.table_id:

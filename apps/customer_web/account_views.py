@@ -31,6 +31,23 @@ class DiscountInput(serializers.Serializer):
     discount_remark = serializers.CharField(max_length=180, allow_blank=True, default='')
 
 
+class CustomerIdentityInput(serializers.Serializer):
+    name = serializers.CharField(max_length=150, required=False)
+    phone = serializers.CharField(max_length=32, allow_blank=True, required=False)
+    expected_name = serializers.CharField(max_length=150, allow_blank=True)
+    expected_phone = serializers.CharField(max_length=32, allow_blank=True)
+
+
+class CustomerIdentityView(WebsiteAnalyticsView):
+    def patch(self, request, contact_id):
+        from .account_services import edit_customer_identity
+        branch = audience_branch(request)
+        serializer = CustomerIdentityInput(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        edit_customer_identity(branch, request.user, contact_id, serializer.validated_data)
+        return Response(customer_account(branch, contact_id, request.user))
+
+
 class CustomerAccountView(WebsiteAnalyticsView):
     def patch(self, request, contact_id):
         from .account_services import save_customer_discount

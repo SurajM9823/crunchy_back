@@ -124,3 +124,30 @@ def create_member(branch, actor, values, key):
     CustomerAccountMutation.objects.create(branch=branch, key=key, fingerprint=fingerprint, response=result)
     DaybookEvent.objects.create(branch=branch, event_type='CUSTOMER_ACCOUNT_UPDATED')
     return result
+
+
+@transaction.atomic
+def edit_customer_identity(branch, actor, contact_id, values):
+    import re
+    from django.shortcuts import get_object_or_404
+    from .audience_services import contact_name, contact_phone
+    require_access(actor, branch, 'orders')
+    Branch.objects.select_for_update().get(pk=branch.pk)
+    contact = get_object_or_404(CustomerContact.objects.select_for_update(), branch=branch, pk=contact_id)
+    if contact.name != values['expected_name'] or contact.phone != values['expected_phone']:
+        raise Conflict('Customer details changed. Refresh and try again.')
+    name = contact_name(values.get('name', contact.name))
+    raw_phone = values.get('phone', contact.phone)
+    if raw_phone and (not re.fullmatch(r'[+\d\s().-]+', raw_phone) or len(re.sub(r'\D', '', raw_phone)) < 7):
+        raise ValidationError('Enter a valid phone number.')
+    phone = contact_phone(raw_phone)
+    if not name and not phone:
+        raise ValidationError('A customer needs a name or phone.')
+    if not phone and (contact.discount_percent or Order.objects.filter(customer_contact=contact, credit_amount__gt=0).exists()):
+        raise ValidationError('Customers with a saved discount or credit require a phone number.')
+    identity = {'phone': phone} if phone else {'phone': '', 'name_key': name.casefold()}
+    if CustomerContact.objects.filter(branch=branch, **identity).exclude(pk=contact.pk).exists():
+        raise ValidationError('Another customer already uses these details.')
+    contact.name, contact.phone, contact.name_key = name, phone, name.casefold() if not phone else ''
+    contact.save(update_fields=['name', 'phone', 'name_key'])
+    DaybookEvent.objects.create(branch=branch, event_type='CUSTOMER_ACCOUNT_UPDATED')

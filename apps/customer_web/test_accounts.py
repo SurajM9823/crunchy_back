@@ -49,6 +49,22 @@ class CustomerAccountTests(TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertFalse(CustomerContact.objects.exists())
 
+    def test_customer_identity_edit_preserves_discount_and_blocks_duplicates(self):
+        from .models import CustomerContact
+        contact = CustomerContact.objects.create(branch=self.branch, name='Original', phone='+9779841234567', discount_percent=10, discount_remark='Member')
+        path = f'/api/v1/customer/directory/{contact.pk}/identity/?outlet_id={self.branch.pk}'
+        response = self.client.patch(path, {'name': 'Corrected', 'phone': '9841234568', 'expected_name': 'Original', 'expected_phone': contact.phone}, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+        contact.refresh_from_db()
+        self.assertEqual(contact.name, 'Corrected')
+        self.assertEqual(contact.discount_percent, 10)
+        self.assertEqual(contact.phone, '+9779841234568')
+        CustomerContact.objects.create(branch=self.branch, name='Other', phone='+9779841234569')
+        response = self.client.patch(path, {'phone': '9841234569', 'expected_name': contact.name, 'expected_phone': contact.phone}, format='json')
+        self.assertEqual(response.status_code, 400)
+        response = self.client.patch(path, {'name': 'Stale', 'expected_name': 'Original', 'expected_phone': contact.phone}, format='json')
+        self.assertEqual(response.status_code, 409)
+
     def order(self, **data):
         defaults = dict(branch=self.branch, order_number=f'ACC-{Order.objects.count()}', customer_name='Real customer',
             customer_phone='9841234567', total_payable=100, subtotal=100, is_pos_managed=True,

@@ -42,6 +42,20 @@ class PosWorkflowTests(TestCase):
         self.client=APIClient();self.client.force_authenticate(self.manager)
         self.counter=0
 
+    def test_customer_corrections_after_billing_keep_totals_and_receipts(self):
+        order = self.create(customer_name='Original', customer_phone='9841234567')
+        order = self.command(order, 'bill')
+        saved = list(PosReceipt.objects.filter(order_id=order['id']).values_list('snapshot', flat=True))
+        corrected = self.command(order, 'customer', customer_name='Corrected', customer_phone='9841234568')
+        self.assertEqual(corrected['customer_name'], 'Corrected')
+        self.assertEqual(corrected['total_payable'], order['total_payable'])
+        self.assertEqual(list(PosReceipt.objects.filter(order_id=order['id']).values_list('snapshot', flat=True)), saved)
+        stale = self.post(f'{order["id"]}/customer/', {'version': order['version'], 'customer_name': 'Stale'})
+        self.assertEqual(stale.status_code, 409)
+        self.client.force_authenticate(self.chef)
+        denied = self.post(f'{order["id"]}/customer/', {'version': corrected['version'], 'customer_name': 'Denied'})
+        self.assertEqual(denied.status_code, 403)
+
     def path(self,suffix=''):
         return f'/api/v1/orders/pos/{suffix}?outlet_id={self.branch.pk}'
 

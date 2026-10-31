@@ -118,3 +118,19 @@ class PosDashboardSerializer(PosListSerializer):
 class PosDeleteSerializer(VersionSerializer):
     confirmation = serializers.CharField(max_length=64)
     restore_stock = serializers.BooleanField(default=False)
+
+
+class PosCustomerEditSerializer(VersionSerializer):
+    customer_name = serializers.CharField(max_length=120, allow_blank=False, required=False)
+    customer_phone = serializers.CharField(max_length=32, allow_blank=True, required=False)
+
+    def validate_customer_phone(self, value):
+        import re
+        if value and (not re.fullmatch(r'[+\d\s().-]+', value) or len(re.sub(r'\D', '', value)) < 7):
+            raise serializers.ValidationError('Enter a valid phone number.')
+        return value
+
+    def validate(self, values):
+        if not any(field in values for field in ('customer_name', 'customer_phone')):
+            raise serializers.ValidationError('Enter a name or phone to update.')
+        return values
