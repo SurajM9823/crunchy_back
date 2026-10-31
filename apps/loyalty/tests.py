@@ -34,6 +34,34 @@ class LoyaltyTests(TestCase):
             {'name': 'Gold', 'threshold': '22000.00', 'percent': '10.00'},
             {'name': 'Platinum', 'threshold': '27000.00', 'percent': '15.00'}])
 
+    def test_predefined_customer_discount_without_loyalty_and_outlet_isolation(self):
+        from apps.customer_web.models import CustomerContact
+        from .services import discount, discount_reason
+        self.program.enabled = False
+        self.program.save()
+        CustomerContact.objects.create(branch=self.branch, phone='+9779800000000', name='Regular',
+            discount_percent='12.50', discount_remark='Member agreement')
+        amount, reward = discount(self.branch, '+977 980-000-0000', Decimal('201.00'))
+        self.assertEqual(amount, Decimal('25.13'))
+        self.assertEqual(discount_reason(reward), 'Customer discount: 12.50% - Member agreement')
+        self.assertIsNone(offer(self.other, '9800000000', 201))
+        self.assertEqual(discount(self.branch, '9800000000', 201, Decimal('30')),
+                         (Decimal('30'), None))
+
+    def test_predefined_discount_pos_quote_and_saved_remark(self):
+        from apps.customer_web.models import CustomerContact
+        CustomerContact.objects.create(branch=self.branch, phone='+9779800000000', name='Regular',
+            discount_percent='10', discount_remark='Regular customer')
+        payload = {'items': [{'product_id': self.product.pk, 'quantity': 2}],
+                   'customer_phone': '9800000000', 'customer_name': 'Regular'}
+        quoted = self.post('quote/', payload)
+        self.assertEqual(quoted.status_code, 200, quoted.data)
+        self.assertEqual(quoted.data['loyalty']['source'], 'CUSTOMER')
+        payload['expected_total'] = quoted.data['total_payable']
+        created = self.post('', payload)
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertIn('Regular customer', created.data['discount_reason'])
+
     def paid(self, phone='9800000000', amount='10000', source='POS', **extra):
         self.counter += 1
         values = dict(branch=self.branch, order_number=f'HISTORY-{self.counter}', is_pos_managed=True,

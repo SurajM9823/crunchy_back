@@ -1,3 +1,4 @@
+from apps.loyalty.services import discount_reason
 import hashlib
 import io
 import json
@@ -303,7 +304,7 @@ class CheckoutView(APIView):
                 delivery_address=delivery_address, notes=data['notes'], payment_method='FONEPAY',
                 **{field: Decimal(priced[field]) for field in ['subtotal','total_payable','discount_amount','service_charge_amount','vat_included_amount','cash_round_down_savings']})
             if priced['loyalty']:
-                order.discount_reason = f"Loyalty: {priced['loyalty']['name']} ({priced['loyalty']['percent']}%)"
+                order.discount_reason = discount_reason(priced['loyalty'])
                 order.save(update_fields=['discount_reason'])
             add_lines(order, data['items'], priced, user)
             if table:

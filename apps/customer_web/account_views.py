@@ -26,7 +26,20 @@ class CollectionInput(serializers.Serializer):
         return value
 
 
+class DiscountInput(serializers.Serializer):
+    discount_percent = serializers.DecimalField(max_digits=5, decimal_places=2, min_value=0, max_value=100)
+    discount_remark = serializers.CharField(max_length=180, allow_blank=True, default='')
+
+
 class CustomerAccountView(WebsiteAnalyticsView):
+    def patch(self, request, contact_id):
+        from .account_services import save_customer_discount
+        branch = audience_branch(request)
+        serializer = DiscountInput(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        save_customer_discount(branch, request.user, contact_id, serializer.validated_data)
+        return Response(customer_account(branch, contact_id, request.user))
+
     def get(self, request, contact_id):
         return Response(customer_account(audience_branch(request), contact_id, request.user))
 

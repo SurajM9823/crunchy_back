@@ -1,3 +1,4 @@
+from apps.loyalty.services import discount_reason
 import uuid
 from decimal import Decimal
 from django.db import transaction, models
@@ -153,7 +154,7 @@ def order_create_or_append_tab(
     order.discount_amount, reward = discount(branch, order.customer_phone, order.subtotal, manual, order.pk)
     order.pricing_policy = {**order.pricing_policy, 'manual_discount_amount': str(manual), 'loyalty': reward}
     if reward:
-        order.discount_reason = f"Loyalty: {reward['name']} ({reward['percent']}%)"
+        order.discount_reason = discount_reason(reward)
 
     # 5. Compute Statutory 13% Tax-Inclusive VAT & Cash Rounding
     vat_data = calculate_vat_breakdown(order.subtotal - order.discount_amount)

@@ -12,4 +12,4 @@ def matching_customers(branch, query):
         if digits and re.fullmatch(r'[+\d\s().-]+', query):
             match |= Q(phone__icontains=digits)
         rows = rows.filter(match)
-    return list(rows.order_by('-last_seen', 'pk').values('id', 'name', 'phone')[:25])
+    return list(rows.order_by('-last_seen', 'pk').values('id', 'name', 'phone', 'discount_percent', 'discount_remark')[:25])

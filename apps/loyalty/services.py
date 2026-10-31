@@ -2,7 +2,7 @@
 from decimal import Decimal, ROUND_HALF_UP
 from django.db import transaction
 from django.db.models import Sum
-from apps.customer_web.audience_services import normalized_phone
+from apps.customer_web.audience_services import normalized_phone, contact_phone
 from .models import LoyaltyCustomer, LoyaltyProgram, LoyaltyPurchase
 
 ZERO = Decimal('0.00')
@@ -14,19 +14,29 @@ def eligible_tier(tiers, spent):
 
 
 def offer(branch, phone, subtotal, exclude_order=None):
-    phone = normalized_phone(phone)
+    phone = contact_phone(phone)
     if not phone:
         return None
+    from apps.customer_web.models import CustomerContact
+    contact = CustomerContact.objects.filter(branch=branch, phone=phone, discount_percent__gt=0).first()
+    predefined = None
+    if contact:
+        amount = (Decimal(subtotal) * contact.discount_percent / 100).quantize(Decimal('.01'), rounding=ROUND_HALF_UP)
+        predefined = {'name': contact.discount_remark or 'Predefined customer discount',
+                      'percent': str(contact.discount_percent), 'threshold': '0', 'amount': str(amount),
+                      'source': 'CUSTOMER', 'remark': contact.discount_remark or 'Predefined customer discount'}
     program = LoyaltyProgram.objects.filter(restaurant_id=branch.restaurant_id, enabled=True).first()
-    if not program:
-        return None
+    if not program or not normalized_phone(phone):
+        return predefined
     purchases = LoyaltyPurchase.objects.filter(customer__restaurant_id=branch.restaurant_id, customer__phone=phone)
     if exclude_order:
         purchases = purchases.exclude(order_id=exclude_order)
     spent = purchases.aggregate(total=Sum('amount'))['total'] or ZERO
     tier = eligible_tier(program.tiers, spent)
     if not tier:
-        return None
+        return predefined
+    if predefined and Decimal(predefined['percent']) >= Decimal(tier['percent']):
+        return predefined
     amount = (Decimal(subtotal) * Decimal(tier['percent']) / 100).quantize(Decimal('.01'), rounding=ROUND_HALF_UP)
     return {'name': tier['name'], 'percent': tier['percent'], 'threshold': tier['threshold'],
             'amount': str(amount)}
@@ -72,3 +82,9 @@ def save_program(branch, values):
     program.version += 1
     program.save()
     return program
+
+
+def discount_reason(reward):
+    if reward.get("source") == "CUSTOMER":
+        return f"Customer discount: {reward['percent']}% - {reward['remark']}"
+    return f"Loyalty: {reward['name']} ({reward['percent']}%)"

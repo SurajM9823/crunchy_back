@@ -82,3 +82,17 @@ def receive_customer_payment(branch, actor, contact_id, key, data):
     result = {'id': collection.pk, 'snapshot': collection.snapshot}
     CustomerAccountMutation.objects.create(branch=branch, key=key, fingerprint=fingerprint, response=result)
     return result
+
+
+@transaction.atomic
+def save_customer_discount(branch, actor, contact_id, values):
+    from apps.orders.pos_access import require_access
+    from rest_framework.exceptions import ValidationError
+    require_access(actor, branch, 'discount')
+    from django.shortcuts import get_object_or_404
+    contact = get_object_or_404(CustomerContact.objects.select_for_update(), branch=branch, pk=contact_id)
+    if values['discount_percent'] and not contact.phone:
+        raise ValidationError('Save a customer phone number before assigning a discount.')
+    contact.discount_percent = values['discount_percent']
+    contact.discount_remark = values['discount_remark']
+    contact.save(update_fields=['discount_percent', 'discount_remark'])

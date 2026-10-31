@@ -209,6 +209,9 @@ class AdMetric(models.Model):
 
 
 class CustomerContact(models.Model):
+    discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    discount_remark = models.CharField(max_length=180, blank=True, default="")
+
     branch = models.ForeignKey('restaurants.Branch', on_delete=models.CASCADE)
     phone = models.CharField(max_length=32, blank=True)
     name = models.CharField(max_length=150, blank=True)
@@ -220,6 +223,7 @@ class CustomerContact(models.Model):
 
     class Meta:
         constraints = [
+            models.CheckConstraint(condition=models.Q(discount_percent__gte=0, discount_percent__lte=100), name='customer_discount_range'),
             models.UniqueConstraint(fields=['branch', 'phone'], condition=~models.Q(phone=''), name='customer_contact_outlet_phone'),
             models.UniqueConstraint(fields=['branch', 'name_key'], condition=models.Q(phone=''), name='customer_contact_outlet_name'),
         ]

@@ -1,4 +1,5 @@
 """Atomic staff commands: price authority, concurrency, ledgers and durable events."""
+from apps.loyalty.services import discount_reason
 import hashlib
 import json
 import uuid
@@ -89,8 +90,8 @@ def apply_totals(order, manual=None):
         order.pricing_policy = {**order.pricing_policy, 'loyalty': result['loyalty'],
                                 'manual_discount_amount': result['manual_discount_amount']}
         if result['loyalty']:
-            order.discount_reason = f"Loyalty: {result['loyalty']['name']} ({result['loyalty']['percent']}%)"
-        elif order.discount_reason.startswith('Loyalty:'):
+            order.discount_reason = discount_reason(result['loyalty'])
+        elif order.discount_reason.startswith(('Loyalty:', 'Customer discount:')):
             order.discount_reason = ''
     order.payment_status = 'PAID' if order.paid_amount >= order.total_payable else 'UNPAID'
 
@@ -297,7 +298,7 @@ def mutate(branch, actor, key, action, data, order_id=None):
             status='ACCEPTED',**{k:data[k] for k in ['customer_name','customer_phone','fulfillment_type','delivery_address','notes','payment_method','discount_reason']},
             **{k:Decimal(priced[k]) for k in ['subtotal','discount_amount','service_charge_amount','cash_round_down_savings','vat_included_amount','total_payable']})
         if priced.get('loyalty'):
-            order.discount_reason = f"Loyalty: {priced['loyalty']['name']} ({priced['loyalty']['percent']}%)"
+            order.discount_reason = discount_reason(priced['loyalty'])
         add_lines(order,data['items'],priced,actor)
         if table:
             table.active_session_id = order.table_session_id
